@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Brush } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Clock, Activity, History, SlidersHorizontal, AlertCircle, Wallet, CheckCircle2, XCircle, BellRing, X, Share2, Download, Loader2 } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Clock, Activity, History, SlidersHorizontal, AlertCircle, Wallet, CheckCircle2, XCircle, BellRing, X, Share2, Download, Loader2, Star, ChevronDown, Info } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '../lib/utils';
 import { fetchBinance } from '../lib/api';
@@ -60,7 +60,8 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
-type Asset = 'BTCUSDT' | 'ETHUSDT';
+type Asset = 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT' | 'BNBUSDT' | 'XRPUSDT';
+const ASSETS: Asset[] = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'];
 type Direction = 'UP' | 'DOWN';
 type TradeStatus = 'ACTIVE' | 'WON' | 'LOST' | 'TIE';
 type TimeRange = '1m' | '1h' | '6h' | '1d';
@@ -101,8 +102,15 @@ interface TradeViewProps {
 export default function TradeView({ user, balance, setBalance, addNotification }: TradeViewProps) {
   const [currentAsset, setCurrentAsset] = useState<Asset>('BTCUSDT');
   const [timeRange, setTimeRange] = useState<TimeRange>('1m');
-  const [prices, setPrices] = useState<Record<Asset, number>>({ BTCUSDT: 0, ETHUSDT: 0 });
-  const [chartData, setChartData] = useState<Record<Asset, ChartPoint[]>>({ BTCUSDT: [], ETHUSDT: [] });
+  const [prices, setPrices] = useState<Record<Asset, number>>(
+    ASSETS.reduce((acc, asset) => ({ ...acc, [asset]: 0 }), {} as Record<Asset, number>)
+  );
+  const [chartData, setChartData] = useState<Record<Asset, ChartPoint[]>>(
+    ASSETS.reduce((acc, asset) => ({ ...acc, [asset]: [] }), {} as Record<Asset, ChartPoint[]>)
+  );
+  
+  const [favorites, setFavorites] = useState<Asset[]>(['BTCUSDT', 'ETHUSDT']);
+  const [showAssetDropdown, setShowAssetDropdown] = useState(false);
   
   const [tradeAmount, setTradeAmount] = useState(100);
   const [expirySeconds, setExpirySeconds] = useState(60);
@@ -131,6 +139,13 @@ export default function TradeView({ user, balance, setBalance, addNotification }
     ...(orderBook.asks.length > 0 ? orderBook.asks.slice(0, 10).map(([p, q]) => parseFloat(p) * parseFloat(q)) : [0]),
     1
   );
+
+  const toggleFavorite = (e: React.MouseEvent, asset: Asset) => {
+    e.stopPropagation();
+    setFavorites(prev => 
+      prev.includes(asset) ? prev.filter(a => a !== asset) : [...prev, asset]
+    );
+  };
 
   const getPayoutPercentage = (amount: number) => {
     if (amount >= 200001) return 0.85;
@@ -255,10 +270,10 @@ export default function TradeView({ user, balance, setBalance, addNotification }
       }
     };
     
-    fetchHistory('BTCUSDT');
-    fetchHistory('ETHUSDT');
+    ASSETS.forEach(asset => fetchHistory(asset));
     
-    const ws = new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker/ethusdt@ticker');
+    const streams = ASSETS.map(a => `${a.toLowerCase()}@ticker`).join('/');
+    const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
     
     ws.onmessage = (event) => {
       const payload = JSON.parse(event.data);
@@ -602,15 +617,65 @@ export default function TradeView({ user, balance, setBalance, addNotification }
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden flex flex-col h-[400px] sm:h-[500px] lg:h-[600px] shadow-xl">
             {/* Chart Header */}
             <div className="px-4 sm:px-6 py-4 border-b border-zinc-800 flex flex-wrap items-center justify-between bg-zinc-900/80 gap-4">
-              <div className="flex items-center gap-4">
-                <select 
-                  className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-100 rounded-lg px-3 py-1.5 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  value={currentAsset}
-                  onChange={(e) => setCurrentAsset(e.target.value as Asset)}
-                >
-                  <option value="BTCUSDT">BTC / USD</option>
-                  <option value="ETHUSDT">ETH / USD</option>
-                </select>
+              <div className="flex items-center gap-4 relative">
+                <div className="relative">
+                  <button 
+                    onClick={() => setShowAssetDropdown(!showAssetDropdown)}
+                    className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-100 rounded-lg px-3 py-1.5 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  >
+                    {currentAsset.replace('USDT', ' / USD')}
+                    <ChevronDown className="w-4 h-4 text-zinc-500" />
+                  </button>
+                  
+                  {showAssetDropdown && (
+                    <>
+                      <div className="fixed inset-0 z-30" onClick={() => setShowAssetDropdown(false)} />
+                      <div className="absolute top-full left-0 mt-2 w-56 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl z-40 overflow-hidden">
+                        <div className="p-2">
+                          <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider px-2 py-1 mb-1">Favorites</div>
+                          {favorites.length > 0 ? (
+                            favorites.map(asset => (
+                              <button
+                                key={`fav-${asset}`}
+                                onClick={() => { setCurrentAsset(asset); setShowAssetDropdown(false); }}
+                                className={cn(
+                                  "w-full flex items-center justify-between px-2 py-2 rounded-lg text-sm font-medium transition-colors",
+                                  currentAsset === asset ? "bg-emerald-500/10 text-emerald-500" : "hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300"
+                                )}
+                              >
+                                <span>{asset.replace('USDT', ' / USD')}</span>
+                                <Star 
+                                  className="w-4 h-4 text-amber-400 fill-amber-400" 
+                                  onClick={(e) => toggleFavorite(e, asset)}
+                                />
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-2 py-2 text-xs text-zinc-500 italic">No favorites yet</div>
+                          )}
+                          
+                          <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider px-2 py-1 mt-2 mb-1 border-t border-zinc-200 dark:border-zinc-800 pt-2">All Assets</div>
+                          {ASSETS.filter(a => !favorites.includes(a)).map(asset => (
+                            <button
+                              key={`all-${asset}`}
+                              onClick={() => { setCurrentAsset(asset); setShowAssetDropdown(false); }}
+                              className={cn(
+                                "w-full flex items-center justify-between px-2 py-2 rounded-lg text-sm font-medium transition-colors",
+                                currentAsset === asset ? "bg-emerald-500/10 text-emerald-500" : "hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300"
+                              )}
+                            >
+                              <span>{asset.replace('USDT', ' / USD')}</span>
+                              <Star 
+                                className="w-4 h-4 text-zinc-400 hover:text-amber-400 transition-colors" 
+                                onClick={(e) => toggleFavorite(e, asset)}
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
                 <div className="flex flex-col">
                   <span className="text-xl sm:text-2xl font-sans font-black font-bold tracking-tight">
                     ${prices[currentAsset]?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '---'}
@@ -979,7 +1044,16 @@ export default function TradeView({ user, balance, setBalance, addNotification }
 
             {/* Payout Info */}
             <div className="bg-zinc-950 rounded-xl p-4 border border-zinc-800 flex justify-between items-center">
-              <span className="text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 font-medium">Potential Payout</span>
+              <div className="group relative flex items-center gap-1.5">
+                <span className="text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 font-medium">Potential Payout</span>
+                <div className="relative">
+                  <Info className="w-3.5 h-3.5 text-zinc-500 cursor-help" />
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-zinc-800 text-[10px] leading-tight text-zinc-200 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl border border-zinc-700 text-center">
+                    Payout = Amount + (Amount * Percentage Payout)
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-zinc-800" />
+                  </div>
+                </div>
+              </div>
               <span className="text-emerald-400 font-sans font-black font-bold text-lg">
                 {getPayoutPercentage(tradeAmount) * 100}% (${(tradeAmount * (1 + getPayoutPercentage(tradeAmount))).toFixed(2)})
               </span>
@@ -1173,7 +1247,16 @@ export default function TradeView({ user, balance, setBalance, addNotification }
                   <span className="font-sans font-black font-bold">${tradeToConfirm.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2">
-                  <span className="text-zinc-400 dark:text-zinc-500">Potential Payout</span>
+                  <div className="group relative flex items-center gap-1.5">
+                    <span className="text-zinc-400 dark:text-zinc-500">Potential Payout</span>
+                    <div className="relative">
+                      <Info className="w-3.5 h-3.5 text-zinc-500 cursor-help" />
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-zinc-800 text-[10px] leading-tight text-zinc-200 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl border border-zinc-700 text-center">
+                        Payout = Amount + (Amount * Percentage Payout)
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-zinc-800" />
+                      </div>
+                    </div>
+                  </div>
                   <span className="font-sans font-black font-bold text-emerald-400">
                     ${tradeToConfirm.payout.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>

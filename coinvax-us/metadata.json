@@ -1,5 +1,7 @@
 {
   "name": "COINVAX US",
   "description": "US and Canada crypto options trading simulator where users estimate price rise or fall.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "camera"
+  ]
 }

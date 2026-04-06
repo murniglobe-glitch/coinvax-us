@@ -128,6 +128,21 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["uid", "amount", "method", "status", "createdAt"]
+    },
+    "Deposit": {
+      "title": "Deposit",
+      "description": "A deposit request from a user.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "DENIED"] },
+        "notified": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["uid", "amount", "method", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -158,6 +173,10 @@
     "/withdrawals/{withdrawalId}": {
       "schema": "Withdrawal",
       "description": "All withdrawal requests."
+    },
+    "/deposits/{depositId}": {
+      "schema": "Deposit",
+      "description": "All deposit requests."
     }
   }
 }

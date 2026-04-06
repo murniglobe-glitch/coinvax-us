@@ -100,9 +100,10 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          request.auth.uid == "F9Hd82WxLgSSsXZF6btmyka0fqg2" ||
-          (request.auth.token.email == "murni.globe@gmail.com" && request.auth.token.email_verified == true));
+        (request.auth.uid == "F9Hd82WxLgSSsXZF6btmyka0fqg2" ||
+         (request.auth.token.email == "murni.globe@gmail.com" && request.auth.token.email_verified == true) ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin'));
     }
 
     function isValidEmail(email) {
@@ -182,6 +183,16 @@ service cloud.firestore {
              data.createdAt is number;
     }
 
+    function isValidDeposit(data) {
+      return hasRequiredFields(['uid', 'amount', 'method', 'status', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             data.amount is number && data.amount > 0 &&
+             data.method is string &&
+             data.status in ['PENDING', 'APPROVED', 'DENIED'] &&
+             (!('notified' in data) || data.notified is bool) &&
+             data.createdAt is number;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -256,7 +267,7 @@ service cloud.firestore {
     }
 
     match /withdrawals/{withdrawalId} {
-      allow read: if isAuthenticated() && (resource == null || resource.data.uid == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.uid == request.auth.uid));
       allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid && isValidWithdrawal(request.resource.data) && request.resource.data.status == 'PENDING';
       allow update: if isAdmin() || (
                       isAuthenticated() && 
@@ -275,6 +286,20 @@ service cloud.firestore {
                           request.resource.data.notified == true
                         )
                       )
+                    );
+      allow delete: if isAdmin();
+    }
+
+    match /deposits/{depositId} {
+      allow read: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.uid == request.auth.uid));
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid && isValidDeposit(request.resource.data) && request.resource.data.status == 'PENDING';
+      allow update: if isAdmin() || (
+                      isAuthenticated() && 
+                      resource.data.uid == request.auth.uid && 
+                      resource.data.status != 'PENDING' &&
+                      resource.data.notified != true &&
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['notified']) &&
+                      request.resource.data.notified == true
                     );
       allow delete: if isAdmin();
     }

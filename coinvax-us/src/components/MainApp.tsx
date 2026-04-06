@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Home, Wallet, LineChart, BarChart2, User, LogOut, X, TrendingUp, TrendingDown, Activity, ArrowRightLeft, ArrowDownToLine, ArrowUpFromLine, CreditCard, Users, Bitcoin, ArrowLeft, Send, HeadphonesIcon, MessageSquare, Bell, Sun, Moon, CheckCircle2, Edit2, Save, Search, QrCode, Newspaper, PlaySquare, Play } from 'lucide-react';
+import { Home, Wallet, LineChart, BarChart2, User, LogOut, X, TrendingUp, TrendingDown, Activity, ArrowRightLeft, ArrowDownToLine, ArrowUpFromLine, CreditCard, Users, Bitcoin, ArrowLeft, Send, HeadphonesIcon, MessageSquare, Bell, Sun, Moon, CheckCircle2, Edit2, Save, Search, QrCode, Newspaper, PlaySquare, Play, Phone } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, YAxis, XAxis, PieChart, Pie, Cell, Tooltip, BarChart, Bar } from 'recharts';
 import { cn } from '../lib/utils';
 import TradeView from './TradeView';
@@ -306,9 +306,56 @@ export default function MainApp({ user }: { user: any }) {
         handleFirestoreError(error, OperationType.LIST, 'withdrawals');
       });
 
+      // Listen to deposits
+      const qDeposits = query(collection(db, 'deposits'), where('uid', '==', user.uid));
+      const unsubscribeDeposits = onSnapshot(qDeposits, (snapshot) => {
+        snapshot.docChanges().forEach(async (change) => {
+          const data = change.doc.data();
+          if (data.status !== 'PENDING' && !data.notified) {
+            if (data.status === 'APPROVED') {
+              addNotification('Deposit Approved', `Your deposit of ${data.amount} ${data.method} has been approved.`);
+              // Add the amount to Main Account using transaction
+              try {
+                await runTransaction(db, async (transaction) => {
+                  const depositRef = doc(db, 'deposits', change.doc.id);
+                  const depositDoc = await transaction.get(depositRef);
+                  if (!depositDoc.exists() || depositDoc.data().notified) {
+                    return; // Already processed
+                  }
+                  
+                  const userRef = doc(db, 'users', user.uid);
+                  const userDoc = await transaction.get(userRef);
+                  if (userDoc.exists()) {
+                    const userData = userDoc.data();
+                    const currentAllocations = userData.allocations || {};
+                    const currentMain = currentAllocations['Main Account'] || 0;
+                    const newAllocations = { ...currentAllocations, 'Main Account': currentMain + data.amount };
+                    const newTotalBalance = Object.values(newAllocations).reduce((a, b) => (a as number) + (b as number), 0);
+                    
+                    transaction.update(userRef, {
+                      allocations: newAllocations,
+                      balance: newTotalBalance
+                    });
+                    transaction.update(depositRef, { notified: true });
+                  }
+                });
+              } catch (error) {
+                console.error("Failed to process deposit approval", error);
+              }
+            } else if (data.status === 'DENIED') {
+              addNotification('Deposit Denied', `Your deposit of ${data.amount} ${data.method} has been denied.`);
+              try { await updateDoc(doc(db, 'deposits', change.doc.id), { notified: true }); } catch (e) { console.error(e); }
+            }
+          }
+        });
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'deposits');
+      });
+
       return () => {
         unsubscribeUser();
         unsubscribeWithdrawals();
+        unsubscribeDeposits();
       };
     }
   }, [user]);
@@ -480,7 +527,7 @@ export default function MainApp({ user }: { user: any }) {
       case 'HOME':
         return <HomeView marketData={marketData} onTradeClick={() => setActiveTab('TRADE')} />;
       case 'ASSETS':
-        return <AssetsView allocations={allocations} setAllocations={handleUpdateAllocations} balance={balance} addNotification={addNotification} />;
+        return <AssetsView allocations={allocations} setAllocations={handleUpdateAllocations} balance={balance} addNotification={addNotification} userCountry={currentUser?.country} />;
       case 'TRADE':
         return <TradeView user={currentUser} balance={allocations['Trading Account']} setBalance={handleSetBalance} addNotification={addNotification} />;
       case 'MARKET':
@@ -1056,13 +1103,21 @@ interface AssetsViewProps {
   setAllocations: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   balance: number;
   addNotification?: (title: string, message: string) => void;
+  userCountry?: string;
 }
 
-function AssetsView({ allocations, setAllocations, balance, addNotification }: AssetsViewProps) {
-  const [view, setView] = useState<'OVERVIEW' | 'DEPOSIT' | 'WITHDRAW' | 'TRANSFER' | 'DEPOSIT_CRYPTO' | 'DEPOSIT_CARD' | 'DEPOSIT_PAYPAL' | 'DEPOSIT_BANK' | 'DEPOSIT_ZELLE' | 'DEPOSIT_INTERAC'>('OVERVIEW');
+function AssetsView({ allocations, setAllocations, balance, addNotification, userCountry }: AssetsViewProps) {
+  const [view, setView] = useState<'OVERVIEW' | 'DEPOSIT' | 'WITHDRAW' | 'TRANSFER' | 'DEPOSIT_CRYPTO' | 'DEPOSIT_CARD' | 'DEPOSIT_PAYPAL' | 'DEPOSIT_BANK' | 'DEPOSIT_ZELLE' | 'DEPOSIT_INTERAC' | 'DEPOSIT_MOBILE_MONEY'>('OVERVIEW');
   const [cryptoType, setCryptoType] = useState<'BTC' | 'USDT'>('BTC');
   const [depositAmount, setDepositAmount] = useState('');
   const [depositStatus, setDepositStatus] = useState<'IDLE' | 'PENDING' | 'SUCCESS'>('IDLE');
+
+  // Mobile Money State
+  const [mobileMoneyAmount, setMobileMoneyAmount] = useState('');
+  const [mobileMoneyStatus, setMobileMoneyStatus] = useState<'IDLE' | 'PENDING' | 'SUCCESS'>('IDLE');
+  const [mobileMoneyProvider, setMobileMoneyProvider] = useState<'MTN' | 'Airtel'>('MTN');
+  const [mobileNumber, setMobileNumber] = useState('');
+  const [ussdSent, setUssdSent] = useState(false);
 
   // Transfer State
   const [fromAccount, setFromAccount] = useState('Main Account');
@@ -1078,6 +1133,8 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
   // Withdraw State
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawStatus, setWithdrawStatus] = useState<'IDLE' | 'PENDING' | 'SUCCESS'>('IDLE');
+  const [withdrawMethod, setWithdrawMethod] = useState<'Bank Transfer (ACH)' | 'Wire Transfer' | 'Crypto Wallet (USDT)' | 'Mobile Money'>('Bank Transfer (ACH)');
+  const [withdrawMobileNumber, setWithdrawMobileNumber] = useState('');
 
   // PayPal Deposit State
   const [paypalAmount, setPaypalAmount] = useState('');
@@ -1089,10 +1146,59 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
   const [bankDepositMethod, setBankDepositMethod] = useState<'Bank Transfer' | 'Zelle' | 'Interac e-Transfer'>('Bank Transfer');
 
   // Transactions State
-  const [transactions, setTransactions] = useState<{id: string, type: string, asset: string, amount: string, status: string, date: string, details?: string}[]>([
-    { id: 'tx1', type: 'Deposit', asset: 'BTC', amount: '0.045', status: 'Completed', date: new Date(Date.now() - 86400000 * 7).toISOString() },
-    { id: 'tx4', type: 'Withdraw', asset: 'USD', amount: '500', status: 'Pending', date: new Date(Date.now() - 86400000 * 2).toISOString() },
-  ]);
+  const [transactions, setTransactions] = useState<{id: string, type: string, asset: string, amount: string, status: string, date: string, details?: string}[]>([]);
+
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    
+    const qDeposits = query(collection(db, 'deposits'), where('uid', '==', auth.currentUser.uid));
+    const qWithdrawals = query(collection(db, 'withdrawals'), where('uid', '==', auth.currentUser.uid));
+    
+    const unsubscribeDeposits = onSnapshot(qDeposits, (snapshot) => {
+      const depositTxs = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          type: 'Deposit',
+          asset: data.method,
+          amount: data.amount.toString(),
+          status: data.status === 'APPROVED' ? 'Completed' : data.status === 'DENIED' ? 'Denied' : 'Pending',
+          date: new Date(data.createdAt).toISOString()
+        };
+      });
+      setTransactions(prev => {
+        const otherTxs = prev.filter(tx => tx.type !== 'Deposit');
+        return [...otherTxs, ...depositTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      });
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'deposits');
+    });
+
+    const unsubscribeWithdrawals = onSnapshot(qWithdrawals, (snapshot) => {
+      const withdrawalTxs = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          type: 'Withdraw',
+          asset: 'USD',
+          amount: data.amount.toString(),
+          status: data.status === 'APPROVED' ? 'Completed' : data.status === 'PENDING' ? 'Pending' : data.status,
+          date: new Date(data.createdAt).toISOString()
+        };
+      });
+      setTransactions(prev => {
+        const otherTxs = prev.filter(tx => tx.type !== 'Withdraw');
+        return [...otherTxs, ...withdrawalTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      });
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'withdrawals');
+    });
+
+    return () => {
+      unsubscribeDeposits();
+      unsubscribeWithdrawals();
+    };
+  }, []);
 
   // Hardcoded addresses managed by admin
   const walletAddresses = {
@@ -1100,38 +1206,72 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
     USDT: 'THLjRhsWH44cM7TfVL2WEyfxFg2u1t56hW'
   };
 
-  const handleDepositSubmit = () => {
+  const handleDepositSubmit = async () => {
     if (!depositAmount || isNaN(Number(depositAmount)) || Number(depositAmount) <= 0) return;
     setDepositStatus('PENDING');
-    setTimeout(() => {
+    
+    try {
+      const depositData = {
+        uid: auth.currentUser?.uid,
+        amount: Number(depositAmount),
+        method: cryptoType,
+        status: 'PENDING',
+        notified: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      
+      await addDoc(collection(db, 'deposits'), depositData);
+      
       setDepositStatus('SUCCESS');
-      setAllocations(prev => ({ ...prev, 'Main Account': prev['Main Account'] + Number(depositAmount) }));
-      setTransactions(prev => [{ id: Date.now().toString(), type: 'Deposit', asset: cryptoType, amount: depositAmount, status: 'Completed', date: new Date().toISOString() }, ...prev]);
-      addNotification?.('Deposit Successful', `Successfully deposited ${depositAmount} ${cryptoType}`);
+      setTransactions(prev => [{ id: Date.now().toString(), type: 'Deposit', asset: cryptoType, amount: depositAmount, status: 'Pending', date: new Date().toISOString() }, ...prev]);
+      addNotification?.('Deposit Submitted', `Your deposit of ${depositAmount} ${cryptoType} has been submitted and is waiting for management approval.`);
+      
       setTimeout(() => {
         setView('OVERVIEW');
         setDepositStatus('IDLE');
         setDepositAmount('');
       }, 3000);
-    }, 2000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'deposits');
+      setDepositStatus('IDLE');
+      addNotification?.('Error', 'Failed to submit deposit request.');
+    }
   };
 
-  const handleCardDepositSubmit = (e: React.FormEvent) => {
+  const handleCardDepositSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cardDepositAmount || isNaN(Number(cardDepositAmount)) || Number(cardDepositAmount) <= 0) return;
     setCardDepositStatus('PENDING');
-    setTimeout(() => {
+    
+    try {
+      const depositData = {
+        uid: auth.currentUser?.uid,
+        amount: Number(cardDepositAmount),
+        method: 'Card',
+        status: 'PENDING',
+        notified: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      
+      await addDoc(collection(db, 'deposits'), depositData);
+      
       setCardDepositStatus('SUCCESS');
-      setAllocations(prev => ({ ...prev, 'Main Account': prev['Main Account'] + Number(cardDepositAmount) }));
-      setTransactions(prev => [{ id: Date.now().toString(), type: 'Deposit', asset: 'USD', amount: cardDepositAmount, status: 'Completed', date: new Date().toISOString() }, ...prev]);
-      addNotification?.('Deposit Successful', `Successfully deposited $${cardDepositAmount} via Card`);
+      setTransactions(prev => [{ id: Date.now().toString(), type: 'Deposit', asset: 'USD', amount: cardDepositAmount, status: 'Pending', date: new Date().toISOString() }, ...prev]);
+      addNotification?.('Deposit Submitted', `Your deposit of $${cardDepositAmount} via Card has been submitted and is waiting for management approval.`);
+      
       setTimeout(() => {
         setView('OVERVIEW');
         setCardDepositStatus('IDLE');
         setCardDepositAmount('');
         setCardDetails({ number: '', expiry: '', cvv: '' });
       }, 3000);
-    }, 2000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'deposits');
+      setCardDepositStatus('IDLE');
+      addNotification?.('Error', 'Failed to submit deposit request.');
+    }
   };
 
   const handleWithdrawSubmit = async () => {
@@ -1143,7 +1283,8 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
       const withdrawalData = {
         uid: auth.currentUser?.uid,
         amount: Number(withdrawAmount),
-        method: 'USD',
+        method: withdrawMethod,
+        mobileNumber: withdrawMethod === 'Mobile Money' ? withdrawMobileNumber : null,
         status: 'PENDING',
         refunded: false,
         notified: false,
@@ -1159,13 +1300,14 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
         const amount = Number(withdrawAmount);
         return { ...prev, 'Main Account': Math.max(0, currentMain - amount) };
       });
-      setTransactions(prev => [{ id: Date.now().toString(), type: 'Withdraw', asset: 'USD', amount: withdrawAmount, status: 'Pending', date: new Date().toISOString() }, ...prev]);
-      addNotification?.('Withdrawal Submitted', `Your withdrawal request for $${withdrawAmount} has been submitted and is waiting for management approval.`);
+      setTransactions(prev => [{ id: Date.now().toString(), type: 'Withdraw', asset: 'USD', amount: withdrawAmount, status: 'Pending', date: new Date().toISOString(), details: withdrawMethod === 'Mobile Money' ? `Mobile Money: ${withdrawMobileNumber}` : withdrawMethod }, ...prev]);
+      addNotification?.('Withdrawal Submitted', `Your withdrawal request for $${withdrawAmount} via ${withdrawMethod} has been submitted and is waiting for management approval.`);
       
       setTimeout(() => {
         setView('OVERVIEW');
         setWithdrawStatus('IDLE');
         setWithdrawAmount('');
+        setWithdrawMobileNumber('');
       }, 3000);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'withdrawals');
@@ -1174,45 +1316,112 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
     }
   };
 
-  const handlePaypalDeposit = () => {
+  const handlePaypalDeposit = async () => {
     if (!paypalAmount || isNaN(Number(paypalAmount)) || Number(paypalAmount) <= 0) return;
     setPaypalStatus('PENDING');
-    setTimeout(() => {
+    
+    try {
+      const depositData = {
+        uid: auth.currentUser?.uid,
+        amount: Number(paypalAmount),
+        method: 'PayPal',
+        status: 'PENDING',
+        notified: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      
+      await addDoc(collection(db, 'deposits'), depositData);
+      
       setPaypalStatus('SUCCESS');
-      const amount = Number(paypalAmount);
-      setAllocations(prev => ({
-        ...prev,
-        'Main Account': prev['Main Account'] + amount
-      }));
-      setTransactions(prev => [{ id: Date.now().toString(), type: 'Deposit', asset: 'USD', amount: paypalAmount, status: 'Completed', date: new Date().toISOString() }, ...prev]);
-      addNotification?.('Deposit Successful', `Successfully deposited $${amount} via PayPal.`);
+      setTransactions(prev => [{ id: Date.now().toString(), type: 'Deposit', asset: 'USD', amount: paypalAmount, status: 'Pending', date: new Date().toISOString() }, ...prev]);
+      addNotification?.('Deposit Submitted', `Your deposit of $${paypalAmount} via PayPal has been submitted and is waiting for management approval.`);
+      
       setTimeout(() => {
         setView('OVERVIEW');
         setPaypalStatus('IDLE');
         setPaypalAmount('');
       }, 3000);
-    }, 2000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'deposits');
+      setPaypalStatus('IDLE');
+      addNotification?.('Error', 'Failed to submit deposit request.');
+    }
   };
 
-  const handleBankDepositSubmit = (method: 'Bank Transfer' | 'Zelle' | 'Interac e-Transfer') => {
+  const handleBankDepositSubmit = async (method: 'Bank Transfer' | 'Zelle' | 'Interac e-Transfer') => {
     if (!bankDepositAmount || isNaN(Number(bankDepositAmount)) || Number(bankDepositAmount) <= 0) return;
     setBankDepositMethod(method);
     setBankDepositStatus('PENDING');
-    setTimeout(() => {
+    
+    try {
+      const depositData = {
+        uid: auth.currentUser?.uid,
+        amount: Number(bankDepositAmount),
+        method: method,
+        status: 'PENDING',
+        notified: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      
+      await addDoc(collection(db, 'deposits'), depositData);
+      
       setBankDepositStatus('SUCCESS');
-      const amount = Number(bankDepositAmount);
-      setAllocations(prev => ({
-        ...prev,
-        'Main Account': prev['Main Account'] + amount
-      }));
-      setTransactions(prev => [{ id: Date.now().toString(), type: 'Deposit', asset: 'USD', amount: bankDepositAmount, status: 'Completed', date: new Date().toISOString(), details: method }, ...prev]);
-      addNotification?.('Deposit Successful', `Successfully deposited $${amount} via ${method}.`);
+      setTransactions(prev => [{ id: Date.now().toString(), type: 'Deposit', asset: 'USD', amount: bankDepositAmount, status: 'Pending', date: new Date().toISOString(), details: method }, ...prev]);
+      addNotification?.('Deposit Submitted', `Your deposit of $${bankDepositAmount} via ${method} has been submitted and is waiting for management approval.`);
+      
       setTimeout(() => {
         setView('OVERVIEW');
         setBankDepositStatus('IDLE');
         setBankDepositAmount('');
       }, 3000);
-    }, 2000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'deposits');
+      setBankDepositStatus('IDLE');
+      addNotification?.('Error', 'Failed to submit deposit request.');
+    }
+  };
+
+  const handleMobileMoneyDeposit = async () => {
+    if (!mobileMoneyAmount || isNaN(Number(mobileMoneyAmount)) || Number(mobileMoneyAmount) <= 0 || !mobileNumber) return;
+    setMobileMoneyStatus('PENDING');
+    setUssdSent(true);
+    
+    // Simulate USSD Push delay
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    try {
+      const depositData = {
+        uid: auth.currentUser?.uid,
+        amount: Number(mobileMoneyAmount),
+        method: `Mobile Money (${mobileMoneyProvider})`,
+        status: 'PENDING',
+        notified: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        details: `Phone: ${mobileNumber}`
+      };
+      
+      await addDoc(collection(db, 'deposits'), depositData);
+      
+      setMobileMoneyStatus('SUCCESS');
+      setTransactions(prev => [{ id: Date.now().toString(), type: 'Deposit', asset: 'USD', amount: mobileMoneyAmount, status: 'Pending', date: new Date().toISOString(), details: `${mobileMoneyProvider}: ${mobileNumber}` }, ...prev]);
+      addNotification?.('USSD Push Sent', `A USSD push has been sent to ${mobileNumber}. Please enter your PIN on your phone.`);
+      
+      setTimeout(() => {
+        setView('OVERVIEW');
+        setMobileMoneyStatus('IDLE');
+        setMobileMoneyAmount('');
+        setMobileNumber('');
+        setUssdSent(false);
+      }, 5000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'deposits');
+      setMobileMoneyStatus('IDLE');
+      setUssdSent(false);
+      addNotification?.('Error', 'Failed to submit deposit request.');
+    }
   };
 
   if (view === 'DEPOSIT_CRYPTO') {
@@ -1294,7 +1503,7 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
                   value={depositAmount}
                   onChange={(e) => setDepositAmount(e.target.value)}
                   placeholder="0.00"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 px-4 text-lg font-sans font-black focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 px-4 text-lg font-sans font-black focus:outline-none focus:border-emerald-500 transition-colors text-white"
                 />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-500 font-bold">{cryptoType}</span>
               </div>
@@ -1329,8 +1538,8 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <button onClick={() => setView('DEPOSIT_CARD')} className="bg-zinc-900 border border-zinc-800 hover:border-emerald-500/50 rounded-2xl p-6 flex flex-col items-center justify-center text-center gap-4 transition-all group">
-            <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-800 group-hover:bg-emerald-500/10 rounded-full flex items-center justify-center transition-colors">
-              <CreditCard className="w-6 h-6 text-zinc-400 dark:text-zinc-500 group-hover:text-emerald-500" />
+            <div className="w-12 h-12 bg-emerald-500/10 rounded-full flex items-center justify-center text-emerald-500">
+              <CreditCard className="w-6 h-6" />
             </div>
             <div>
               <h3 className="font-bold text-lg">Credit/Debit Card</h3>
@@ -1339,8 +1548,8 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
           </button>
           
           <button onClick={() => setView('DEPOSIT_PAYPAL')} className="bg-zinc-900 border border-zinc-800 hover:border-emerald-500/50 rounded-2xl p-6 flex flex-col items-center justify-center text-center gap-4 transition-all group">
-            <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-800 group-hover:bg-emerald-500/10 rounded-full flex items-center justify-center transition-colors">
-              <span className="font-bold text-xl text-zinc-400 dark:text-zinc-500 group-hover:text-emerald-500">P</span>
+            <div className="w-12 h-12 bg-blue-500/10 rounded-full flex items-center justify-center text-blue-500">
+              <Wallet className="w-6 h-6" />
             </div>
             <div>
               <h3 className="font-bold text-lg">PayPal</h3>
@@ -1349,8 +1558,8 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
           </button>
           
           <button onClick={() => setView('DEPOSIT_CRYPTO')} className="bg-zinc-900 border border-zinc-800 hover:border-emerald-500/50 rounded-2xl p-6 flex flex-col items-center justify-center text-center gap-4 transition-all group">
-            <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-800 group-hover:bg-emerald-500/10 rounded-full flex items-center justify-center transition-colors">
-              <Bitcoin className="w-6 h-6 text-zinc-400 dark:text-zinc-500 group-hover:text-emerald-500" />
+            <div className="w-12 h-12 bg-amber-500/10 rounded-full flex items-center justify-center text-amber-500">
+              <Bitcoin className="w-6 h-6" />
             </div>
             <div>
               <h3 className="font-bold text-lg">Crypto Wallet</h3>
@@ -1359,8 +1568,8 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
           </button>
 
           <button onClick={() => setView('DEPOSIT_BANK')} className="bg-zinc-900 border border-zinc-800 hover:border-emerald-500/50 rounded-2xl p-6 flex flex-col items-center justify-center text-center gap-4 transition-all group">
-            <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-800 group-hover:bg-emerald-500/10 rounded-full flex items-center justify-center transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400 dark:text-zinc-500 group-hover:text-emerald-500"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
+            <div className="w-12 h-12 bg-emerald-500/10 rounded-full flex items-center justify-center text-emerald-500">
+              <ArrowDownToLine className="w-6 h-6" />
             </div>
             <div>
               <h3 className="font-bold text-lg">Bank Transfer (ACH/Wire)</h3>
@@ -1369,8 +1578,8 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
           </button>
 
           <button onClick={() => setView('DEPOSIT_ZELLE')} className="bg-zinc-900 border border-zinc-800 hover:border-emerald-500/50 rounded-2xl p-6 flex flex-col items-center justify-center text-center gap-4 transition-all group">
-            <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-800 group-hover:bg-emerald-500/10 rounded-full flex items-center justify-center transition-colors">
-              <span className="font-bold text-xl text-zinc-400 dark:text-zinc-500 group-hover:text-emerald-500">Z</span>
+            <div className="w-12 h-12 bg-purple-500/10 rounded-full flex items-center justify-center text-purple-500">
+              <Send className="w-6 h-6" />
             </div>
             <div>
               <h3 className="font-bold text-lg">Zelle</h3>
@@ -1379,15 +1588,126 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
           </button>
 
           <button onClick={() => setView('DEPOSIT_INTERAC')} className="bg-zinc-900 border border-zinc-800 hover:border-emerald-500/50 rounded-2xl p-6 flex flex-col items-center justify-center text-center gap-4 transition-all group">
-            <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-800 group-hover:bg-emerald-500/10 rounded-full flex items-center justify-center transition-colors">
-              <span className="font-bold text-xl text-zinc-400 dark:text-zinc-500 group-hover:text-emerald-500">e</span>
+            <div className="w-12 h-12 bg-rose-500/10 rounded-full flex items-center justify-center text-rose-500">
+              <ArrowRightLeft className="w-6 h-6" />
             </div>
             <div>
               <h3 className="font-bold text-lg">Interac e-Transfer</h3>
               <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">Instant transfer for CA users</p>
             </div>
           </button>
+
+          {userCountry === 'Uganda' && (
+            <button onClick={() => setView('DEPOSIT_MOBILE_MONEY')} className="bg-zinc-900 border border-zinc-800 hover:border-emerald-500/50 rounded-2xl p-6 flex flex-col items-center justify-center text-center gap-4 transition-all group">
+              <div className="w-12 h-12 bg-amber-500/10 rounded-full flex items-center justify-center text-amber-500">
+                <Phone className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg">Mobile Money</h3>
+                <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">MTN or Airtel Money (Uganda)</p>
+              </div>
+            </button>
+          )}
         </div>
+      </div>
+    );
+  }
+
+  if (view === 'DEPOSIT_MOBILE_MONEY') {
+    return (
+      <div className="p-4 lg:p-6 flex flex-col gap-6 animate-in fade-in duration-300 max-w-xl mx-auto w-full">
+        <div className="flex items-center gap-4 mb-2">
+          <button onClick={() => setView('DEPOSIT')} className="p-2 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:bg-zinc-800 rounded-full transition-colors border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <h2 className="text-xl font-bold">Mobile Money Deposit</h2>
+        </div>
+
+        {mobileMoneyStatus === 'SUCCESS' ? (
+          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-8 flex flex-col items-center justify-center text-center gap-4 animate-in zoom-in-95">
+            <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center">
+              <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-emerald-400">USSD Push Sent</h3>
+              <p className="text-zinc-400 mt-2">A USSD push has been sent to your phone (+256 {mobileNumber}). Please enter your PIN to authorize the ${mobileMoneyAmount} deposit.</p>
+              <p className="text-xs text-zinc-500 mt-4">Once authorized, your deposit will be marked as pending for management approval.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 flex flex-col gap-6 text-zinc-900 dark:text-white">
+            <div className="flex items-center justify-center mb-4">
+              <div className="w-16 h-16 bg-amber-500/10 rounded-full flex items-center justify-center text-amber-500">
+                <Phone className="w-8 h-8" />
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">Select Provider</label>
+              <div className="grid grid-cols-2 gap-4">
+                <button 
+                  onClick={() => setMobileMoneyProvider('MTN')}
+                  className={cn("py-3 rounded-xl border font-bold transition-all", mobileMoneyProvider === 'MTN' ? "bg-emerald-500/10 border-emerald-500 text-emerald-400" : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-zinc-700")}
+                >
+                  MTN Uganda
+                </button>
+                <button 
+                  onClick={() => setMobileMoneyProvider('Airtel')}
+                  className={cn("py-3 rounded-xl border font-bold transition-all", mobileMoneyProvider === 'Airtel' ? "bg-emerald-500/10 border-emerald-500 text-emerald-400" : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-zinc-700")}
+                >
+                  Airtel Uganda
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-zinc-400 mb-2">Mobile Number (Used for payment)</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <span className="text-zinc-500 font-bold">+256</span>
+                </div>
+                <input 
+                  type="tel" 
+                  value={mobileNumber}
+                  onChange={(e) => setMobileNumber(e.target.value)}
+                  placeholder="7xx xxxxxx"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-16 pr-4 focus:outline-none focus:border-emerald-500 transition-colors text-white"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-zinc-400 mb-2">Amount (USD Equivalent)</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <span className="text-zinc-500 font-bold">$</span>
+                </div>
+                <input 
+                  type="number" 
+                  value={mobileMoneyAmount}
+                  onChange={(e) => setMobileMoneyAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pl-8 pr-4 focus:outline-none focus:border-emerald-500 transition-colors text-white font-sans font-black"
+                />
+              </div>
+              <p className="text-[10px] text-zinc-500 mt-2 italic">Note: Exchange rate will be applied at the time of approval.</p>
+            </div>
+          </div>
+
+          <button 
+            onClick={handleMobileMoneyDeposit}
+              disabled={!mobileMoneyAmount || !mobileNumber || mobileMoneyStatus === 'PENDING'}
+              className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-zinc-950 font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-2"
+            >
+              {mobileMoneyStatus === 'PENDING' ? (
+                <><Activity className="w-5 h-5 animate-pulse" /> {ussdSent ? 'Sending USSD Push...' : 'Processing...'}</>
+              ) : (
+                'Submit Deposit Request'
+              )}
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -1427,16 +1747,39 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
             
             <div>
               <label className="block text-sm font-medium text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 mb-2">Withdrawal Method</label>
-              <select className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 appearance-none">
-                <option>Bank Transfer (ACH)</option>
-                <option>Wire Transfer</option>
-                <option>Crypto Wallet (USDT)</option>
+              <select 
+                value={withdrawMethod}
+                onChange={(e) => setWithdrawMethod(e.target.value as any)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 appearance-none"
+              >
+                <option value="Bank Transfer (ACH)">Bank Transfer (ACH)</option>
+                <option value="Wire Transfer">Wire Transfer</option>
+                <option value="Crypto Wallet (USDT)">Crypto Wallet (USDT)</option>
+                {userCountry === 'Uganda' && <option value="Mobile Money">Mobile Money</option>}
               </select>
             </div>
+
+            {withdrawMethod === 'Mobile Money' && (
+              <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                <label className="block text-sm font-medium text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 mb-2">Mobile Money Number</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <Phone className="w-4 h-4 text-zinc-500" />
+                  </div>
+                  <input 
+                    type="tel" 
+                    value={withdrawMobileNumber}
+                    onChange={(e) => setWithdrawMobileNumber(e.target.value)}
+                    placeholder="Enter phone number"
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 pl-10 pr-4 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black"
+                  />
+                </div>
+              </div>
+            )}
             
             <button 
               onClick={handleWithdrawSubmit}
-              disabled={!withdrawAmount || Number(withdrawAmount) <= 0 || Number(withdrawAmount) > allocations['Main Account'] || withdrawStatus !== 'IDLE'}
+              disabled={!withdrawAmount || Number(withdrawAmount) <= 0 || Number(withdrawAmount) > allocations['Main Account'] || withdrawStatus !== 'IDLE' || (withdrawMethod === 'Mobile Money' && !withdrawMobileNumber)}
               className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-zinc-950 font-bold py-3.5 rounded-xl mt-4 transition-colors flex items-center justify-center gap-2"
             >
               {withdrawStatus === 'PENDING' ? (
@@ -1619,6 +1962,11 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
           </div>
         ) : (
           <form onSubmit={handleCardDepositSubmit} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 flex flex-col gap-4 text-zinc-900 dark:text-white">
+            <div className="flex items-center justify-center mb-4">
+              <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center text-emerald-500">
+                <CreditCard className="w-8 h-8" />
+              </div>
+            </div>
             <div>
               <label className="block text-sm font-medium text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 mb-2">Card Number</label>
               <input 
@@ -1660,7 +2008,7 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
               <label className="block text-sm font-medium text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 mb-2">Deposit Amount (USD)</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <span className="text-zinc-400 dark:text-zinc-500 font-bold">$</span>
+                   <span className="text-zinc-400 dark:text-zinc-500 font-bold">$</span>
                 </div>
                 <input 
                   type="number" 
@@ -1668,7 +2016,7 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
                   value={cardDepositAmount}
                   onChange={(e) => setCardDepositAmount(e.target.value)}
                   placeholder="0.00"
-                  className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 pl-8 pr-4 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black"
+                  className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 pl-8 pr-4 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black text-white"
                 />
               </div>
             </div>
@@ -1730,7 +2078,7 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
                     value={paypalAmount}
                     onChange={(e) => setPaypalAmount(e.target.value)}
                     placeholder="0.00"
-                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 pl-8 pr-4 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black"
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 pl-8 pr-4 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black text-white"
                   />
                 </div>
               </div>
@@ -1758,9 +2106,9 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
 
   if (view === 'DEPOSIT_BANK' || view === 'DEPOSIT_ZELLE' || view === 'DEPOSIT_INTERAC') {
     const methodInfo = {
-      'DEPOSIT_BANK': { title: 'Bank Transfer (ACH/Wire)', icon: <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>, method: 'Bank Transfer' as const },
-      'DEPOSIT_ZELLE': { title: 'Zelle Deposit', icon: <span className="font-bold text-3xl text-purple-500">Z</span>, method: 'Zelle' as const },
-      'DEPOSIT_INTERAC': { title: 'Interac e-Transfer', icon: <span className="font-bold text-3xl text-yellow-500">e</span>, method: 'Interac e-Transfer' as const }
+      'DEPOSIT_BANK': { title: 'Bank Transfer (ACH/Wire)', icon: <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center text-emerald-500"><ArrowDownToLine className="w-8 h-8" /></div>, method: 'Bank Transfer' as const },
+      'DEPOSIT_ZELLE': { title: 'Zelle Deposit', icon: <div className="w-16 h-16 bg-purple-500/10 rounded-full flex items-center justify-center text-purple-500"><Send className="w-8 h-8" /></div>, method: 'Zelle' as const },
+      'DEPOSIT_INTERAC': { title: 'Interac e-Transfer', icon: <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center text-rose-500"><ArrowRightLeft className="w-8 h-8" /></div>, method: 'Interac e-Transfer' as const }
     };
     const currentMethod = methodInfo[view];
 
@@ -1786,9 +2134,7 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
         ) : (
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 flex flex-col gap-6 text-zinc-900 dark:text-white">
             <div className="flex items-center justify-center mb-4">
-              <div className="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center">
-                {currentMethod.icon}
-              </div>
+              {currentMethod.icon}
             </div>
             
             <div className="space-y-4">
@@ -1803,7 +2149,7 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
                     value={bankDepositAmount}
                     onChange={(e) => setBankDepositAmount(e.target.value)}
                     placeholder="0.00"
-                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 pl-8 pr-4 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black"
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 pl-8 pr-4 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black text-white"
                   />
                 </div>
               </div>
@@ -1950,7 +2296,8 @@ function AssetsView({ allocations, setAllocations, balance, addNotification }: A
                     <p className="font-bold text-sm">{tx.type === 'Withdraw' ? '-' : '+'}{tx.amount} {tx.asset}</p>
                     <p className={cn(
                       "text-[10px] font-bold uppercase tracking-wider",
-                      tx.status === 'Completed' ? "text-emerald-500" : "text-amber-500"
+                      tx.status === 'Completed' ? "text-emerald-500" : 
+                      tx.status === 'Denied' || tx.status === 'CANCELED' || tx.status === 'DISAPPROVED' ? "text-rose-500" : "text-amber-500"
                     )}>{tx.status}</p>
                   </div>
                 </div>

@@ -49,35 +49,33 @@ const generateP2POrders = () => {
   const types = ['BUY', 'SELL'];
   const names = ['CryptoKing', 'TraderJoe', 'SatoshiFan', 'DiamondHands', 'MoonWalker', 'WhaleAlert', 'BullRun', 'BearMarket', 'Hodler', 'DayTrader', 'AlphaSeeker', 'CoinMaster', 'BlockBuilder', 'ChainLinker', 'DeFiDegen'];
   const paymentMethods = ['Bank Transfer', 'PayPal', 'Revolut', 'Zelle', 'Wise', 'Cash App'];
-  const orders = [];
-  for (let i = 1; i <= 150; i++) {
+  const orders: any[] = [];
+  for (let i = 1; i <= 1200; i++) {
     const asset = assets[Math.floor(Math.random() * assets.length)];
     const type = types[Math.floor(Math.random() * types.length)] as 'BUY' | 'SELL';
-    const user = names[Math.floor(Math.random() * names.length)] + Math.floor(Math.random() * 1000);
-    const rawAmount = Math.random() * (asset === 'USDT' ? 5000 : 5);
-    const amount = rawAmount.toFixed(4);
+    const userName = names[Math.floor(Math.random() * names.length)] + Math.floor(Math.random() * 1000);
+    const amount = parseFloat((Math.random() * (asset === 'USDT' ? 5000 : 5)).toFixed(4));
     let priceBase = asset === 'BTC' ? 65000 : asset === 'ETH' ? 3500 : asset === 'USDT' ? 1 : asset === 'SOL' ? 150 : asset === 'BNB' ? 600 : 1;
-    const rawPrice = priceBase * (1 + (Math.random() * 0.04 - 0.02));
-    const price = rawPrice.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    const price = parseFloat((priceBase * (1 + (Math.random() * 0.04 - 0.02))).toFixed(2));
     
     orders.push({
-      id: `P2P-${i.toString().padStart(4, '0')}`,
-      user,
+      uid: `mock-user-${i}`,
+      userName,
       type,
       asset,
       amount,
-      rawAmount,
       price,
-      rawPrice,
+      status: 'OPEN',
       paymentMethod: paymentMethods[Math.floor(Math.random() * paymentMethods.length)],
       completionRate: Math.floor(Math.random() * 20 + 80),
-      trades: Math.floor(Math.random() * 1000 + 50)
+      tradesCount: Math.floor(Math.random() * 1000 + 50),
+      createdAt: Date.now() - (i * 60000)
     });
   }
   return orders;
 };
 
-const ALL_P2P_ORDERS = generateP2POrders();
+import { writeBatch } from 'firebase/firestore';
 
 interface P2PViewProps {
   addNotification?: (title: string, message: string) => void;
@@ -100,10 +98,38 @@ export default function P2PView({ addNotification }: P2PViewProps) {
   const [activeOrder, setActiveOrder] = useState<P2POrder | null>(null);
   const [allOrders, setAllOrders] = useState<P2POrder[]>([]);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const [isSeeding, setIsSeeding] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const seedDatabase = async () => {
+    if (isSeeding) return;
+    setIsSeeding(true);
+    addNotification?.('Seeding Started', 'Populating 1200 P2P orders to Firebase...');
+    
+    try {
+      const orders = generateP2POrders();
+      const batchSize = 500;
+      for (let i = 0; i < orders.length; i += batchSize) {
+        const batch = writeBatch(db);
+        const chunk = orders.slice(i, i + batchSize);
+        chunk.forEach(order => {
+          const newDocRef = doc(collection(db, 'p2p_orders'));
+          batch.set(newDocRef, order);
+        });
+        await batch.commit();
+        console.log(`Seeded ${i + chunk.length} orders...`);
+      }
+      addNotification?.('Seeding Complete', '1200 orders successfully added to Firebase.');
+    } catch (error) {
+      console.error("Error seeding database:", error);
+      addNotification?.('Error', 'Failed to seed P2P orders');
+    } finally {
+      setIsSeeding(false);
+    }
   };
 
   useEffect(() => {
@@ -118,17 +144,38 @@ export default function P2PView({ addNotification }: P2PViewProps) {
   const [p2pMaxAmount, setP2pMaxAmount] = useState('');
   const [p2pStartIndex, setP2pStartIndex] = useState(0);
 
+  const filteredP2P = allOrders.filter(o => {
+    if (p2pTypeFilter !== 'ALL' && o.type !== p2pTypeFilter) return false;
+    if (p2pAssetFilter !== 'ALL' && o.asset !== p2pAssetFilter) return false;
+    // Note: paymentMethod is not in the Firestore schema yet, but we can add it or ignore for now
+    // if (p2pPaymentFilter !== 'ALL' && o.paymentMethod !== p2pPaymentFilter) return false;
+    if (p2pSearch && !o.userName?.toLowerCase().includes(p2pSearch.toLowerCase())) return false;
+    if (p2pMinAmount && o.amount < Number(p2pMinAmount)) return false;
+    if (p2pMaxAmount && o.amount > Number(p2pMaxAmount)) return false;
+    return true;
+  });
+
+  // Auto-pagination every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setP2pStartIndex(prev => {
+        const next = prev + 10;
+        return next >= filteredP2P.length ? 0 : next;
+      });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [filteredP2P.length]);
+
   // Listen to all open orders
   useEffect(() => {
     const q = query(
       collection(db, 'p2p_orders'),
       where('status', '==', 'OPEN'),
-      limit(50)
+      limit(2000)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as P2POrder));
-      // Sort in frontend to avoid needing a composite index
       orders.sort((a, b) => b.createdAt - a.createdAt);
       setAllOrders(orders);
     }, (error) => {
@@ -218,17 +265,6 @@ export default function P2PView({ addNotification }: P2PViewProps) {
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     };
   }, [isTyping, activeOrder?.id, p2pChatOpen]);
-
-  const filteredP2P = allOrders.filter(o => {
-    if (p2pTypeFilter !== 'ALL' && o.type !== p2pTypeFilter) return false;
-    if (p2pAssetFilter !== 'ALL' && o.asset !== p2pAssetFilter) return false;
-    // Note: paymentMethod is not in the Firestore schema yet, but we can add it or ignore for now
-    // if (p2pPaymentFilter !== 'ALL' && o.paymentMethod !== p2pPaymentFilter) return false;
-    if (p2pSearch && !o.userName?.toLowerCase().includes(p2pSearch.toLowerCase())) return false;
-    if (p2pMinAmount && o.amount < Number(p2pMinAmount)) return false;
-    if (p2pMaxAmount && o.amount > Number(p2pMaxAmount)) return false;
-    return true;
-  });
 
   const displayedP2P = filteredP2P.slice(p2pStartIndex, p2pStartIndex + 10);
 
@@ -345,11 +381,19 @@ export default function P2PView({ addNotification }: P2PViewProps) {
 
   return (
     <div className="p-4 lg:p-6 flex flex-col gap-6 animate-in fade-in duration-300 max-w-7xl mx-auto w-full">
-      <div className="flex items-center gap-4 mb-2">
+      <div className="flex items-center justify-between mb-2">
         <h2 className="text-2xl font-black tracking-tight flex items-center gap-3">
           <Users className="w-8 h-8 text-emerald-500" />
           P2P TRADING
         </h2>
+        <button 
+          onClick={seedDatabase}
+          disabled={isSeeding}
+          className="text-xs font-bold px-4 py-2 rounded-lg bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+        >
+          {isSeeding ? <Loader2 className="w-3 h-3 animate-spin" /> : <History className="w-3 h-3" />}
+          Seed 1200 Orders to Firebase
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -13,12 +13,147 @@ import { doc, setDoc } from 'firebase/firestore';
 type SignupStep = 1 | 2 | 3 | 4 | 5 | 6;
 
 const nationalities = [
-  "American", "British", "Canadian", "Australian", "German", "French", "Japanese", "Chinese", "Indian", "Brazilian", "Mexican", "Italian", "Spanish", "Russian", "South Korean", "Nigerian", "South African", "Egyptian", "Turkish", "Saudi Arabian", "Other"
+  "Afghan", "Albanian", "Algerian", "American", "Andorran", "Angolan", "Antiguans", "Argentinean", "Armenian", "Australian", "Austrian", "Azerbaijani", "Bahamian", "Bahraini", "Bangladeshi", "Barbadian", "Belarusian", "Belgian", "Belizean", "Beninese", "Bhutanese", "Bolivian", "Bosnian", "Botswanan", "Brazilian", "British", "Bruneian", "Bulgarian", "Burkinabe", "Burundian", "Cambodian", "Cameroonian", "Canadian", "Cape Verdean", "Central African", "Chadian", "Chilean", "Chinese", "Colombian", "Comoran", "Congolese", "Costa Rican", "Croatian", "Cuban", "Cypriot", "Czech", "Danish", "Djibouti", "Dominican", "Dutch", "East Timorese", "Ecuadorean", "Egyptian", "Emirian", "Equatorial Guinean", "Eritrean", "Estonian", "Ethiopian", "Fijian", "Filipino", "Finnish", "French", "Gabonese", "Gambian", "Georgian", "German", "Ghanaian", "Greek", "Grenadian", "Guatemalan", "Guinean", "Guyanese", "Haitian", "Herzegovinian", "Honduran", "Hungarian", "Icelander", "Indian", "Indonesian", "Iranian", "Iraqi", "Irish", "Israeli", "Italian", "Ivorian", "Jamaican", "Japanese", "Jordanian", "Kazakhstani", "Kenyan", "Kittian and Nevisian", "Kuwaiti", "Kyrgyz", "Laotian", "Latvian", "Lebanese", "Liberian", "Libyan", "Liechtensteiner", "Lithuanian", "Luxembourger", "Macedonian", "Malagasy", "Malawian", "Malaysian", "Maldivan", "Malian", "Maltese", "Marshallese", "Mauritanian", "Mauritian", "Mexican", "Micronesian", "Moldovan", "Monacan", "Mongolian", "Moroccan", "Mosotho", "Mozambican", "Namibian", "Nauruan", "Nepalese", "New Zealander", "Ni-Vanuatu", "Nicaraguan", "Nigerian", "Nigerien", "North Korean", "Northern Irish", "Norwegian", "Omani", "Pakistani", "Palauan", "Panamanian", "Papua New Guinean", "Paraguayan", "Peruvian", "Polish", "Portuguese", "Qatari", "Romanian", "Russian", "Rwandan", "Saint Lucian", "Salvadoran", "Samoan", "San Marinese", "Sao Tomean", "Saudi", "Scottish", "Senegalese", "Serbian", "Seychellois", "Sierra Leonean", "Singaporean", "Slovakian", "Slovenian", "Solomon Islander", "Somali", "South African", "South Korean", "Spanish", "Sri Lankan", "Sudanese", "Surinamer", "Swazi", "Swedish", "Switzerland", "Syrian", "Taiwanese", "Tajik", "Tanzanian", "Thai", "Togolese", "Tongan", "Trinidadian or Tobagonian", "Tunisian", "Turkish", "Tuvaluan", "Ugandan", "Ukrainian", "Uruguayan", "Uzbekistani", "Venezuelan", "Vietnamese", "Welsh", "Yemenite", "Zambian", "Zimbabwean"
 ];
 
 const countries = [
-  "United States", "United Kingdom", "Canada", "Australia", "Germany", "France", "Japan", "China", "India", "Brazil", "Mexico", "Italy", "Spain", "Russia", "South Korea", "Nigeria", "South Africa", "Egypt", "Turkey", "Saudi Arabia", "Other"
+  "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin", "Bhutan", "Bolivia", "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi", "Cabo Verde", "Cambodia", "Cameroon", "Canada", "Central African Republic", "Chad", "Chile", "China", "Colombia", "Comoros", "Congo (Congo-Brazzaville)", "Costa Rica", "Croatia", "Cuba", "Cyprus", "Czechia (Czech Republic)", "Democratic Republic of the Congo", "Denmark", "Djibouti", "Dominica", "Dominican Republic", "Ecuador", "Egypt", "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji", "Finland", "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guatemala", "Guinea", "Guinea-Bissau", "Guyana", "Haiti", "Holy See", "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Israel", "Italy", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kiribati", "Kuwait", "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya", "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar", "Malawi", "Malaysia", "Maldives", "Mali", "Malta", "Marshall Islands", "Mauritania", "Mauritius", "Mexico", "Micronesia", "Moldova", "Monaco", "Mongolia", "Montenegro", "Morocco", "Mozambique", "Myanmar (formerly Burma)", "Namibia", "Nauru", "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Korea", "North Macedonia", "Norway", "Oman", "Pakistan", "Palau", "Palestine State", "Panama", "Papua New Guinea", "Paraguay", "Peru", "Philippines", "Poland", "Portugal", "Qatar", "Romania", "Russia", "Rwanda", "Saint Kitts and Nevis", "Saint Lucia", "Saint Vincent and the Grenadines", "Samoa", "San Marino", "Sao Tome and Principe", "Saudi Arabia", "Senegal", "Serbia", "Seychelles", "Sierra Leone", "Singapore", "Slovakia", "Slovenia", "Solomon Islands", "Somalia", "South Africa", "South Korea", "South Sudan", "Spain", "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Tajikistan", "Tanzania", "Thailand", "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago", "Tunisia", "Turkey", "Turkmenistan", "Tuvalu", "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom", "United States of America", "Uruguay", "Uzbekistan", "Vanuatu", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
 ];
+
+const countryCodes = [
+  { code: "+1", country: "USA/Canada" },
+  { code: "+44", country: "UK" },
+  { code: "+256", country: "Uganda" },
+  { code: "+234", country: "Nigeria" },
+  { code: "+27", country: "South Africa" },
+  { code: "+91", country: "India" },
+  { code: "+86", country: "China" },
+  { code: "+81", country: "Japan" },
+  { code: "+49", country: "Germany" },
+  { code: "+33", country: "France" },
+  { code: "+39", country: "Italy" },
+  { code: "+34", country: "Spain" },
+  { code: "+7", country: "Russia" },
+  { code: "+55", country: "Brazil" },
+  { code: "+52", country: "Mexico" },
+  { code: "+61", country: "Australia" },
+  { code: "+82", country: "South Korea" },
+  { code: "+90", country: "Turkey" },
+  { code: "+966", country: "Saudi Arabia" },
+  { code: "+971", country: "UAE" },
+  { code: "+20", country: "Egypt" },
+  { code: "+63", country: "Philippines" },
+  { code: "+62", country: "Indonesia" },
+  { code: "+60", country: "Malaysia" },
+  { code: "+66", country: "Thailand" },
+  { code: "+84", country: "Vietnam" },
+  { code: "+92", country: "Pakistan" },
+  { code: "+880", country: "Bangladesh" },
+  { code: "+254", country: "Kenya" },
+  { code: "+233", country: "Ghana" },
+  { code: "+212", country: "Morocco" },
+  { code: "+213", country: "Algeria" },
+  { code: "+216", country: "Tunisia" },
+  { code: "+218", country: "Libya" },
+  { code: "+251", country: "Ethiopia" },
+  { code: "+255", country: "Tanzania" },
+  { code: "+249", country: "Sudan" },
+  { code: "+244", country: "Angola" },
+  { code: "+225", country: "Ivory Coast" },
+  { code: "+237", country: "Cameroon" },
+  { code: "+221", country: "Senegal" },
+  { code: "+263", country: "Zimbabwe" },
+  { code: "+260", country: "Zambia" },
+  { code: "+265", country: "Malawi" },
+  { code: "+264", country: "Namibia" },
+  { code: "+267", country: "Botswana" },
+  { code: "+268", country: "Eswatini" },
+  { code: "+266", country: "Lesotho" },
+  { code: "+230", country: "Mauritius" },
+  { code: "+248", country: "Seychelles" },
+  { code: "+238", country: "Cape Verde" },
+  { code: "+239", country: "Sao Tome" },
+  { code: "+240", country: "Equatorial Guinea" },
+  { code: "+241", country: "Gabon" },
+  { code: "+242", country: "Congo" },
+  { code: "+243", country: "DR Congo" },
+  { code: "+250", country: "Rwanda" },
+  { code: "+257", country: "Burundi" },
+  { code: "+252", country: "Somalia" },
+  { code: "+253", country: "Djibouti" },
+  { code: "+258", country: "Mozambique" },
+  { code: "+261", country: "Madagascar" },
+  { code: "+262", country: "Reunion" },
+  { code: "+269", country: "Comoros" },
+  { code: "+290", country: "Saint Helena" },
+  { code: "+291", country: "Eritrea" },
+  { code: "+297", country: "Aruba" },
+  { code: "+298", country: "Faroe Islands" },
+  { code: "+299", country: "Greenland" },
+  { code: "+350", country: "Gibraltar" },
+  { code: "+351", country: "Portugal" },
+  { code: "+352", country: "Luxembourg" },
+  { code: "+353", country: "Ireland" },
+  { code: "+354", country: "Iceland" },
+  { code: "+355", country: "Albania" },
+  { code: "+356", country: "Malta" },
+  { code: "+357", country: "Cyprus" },
+  { code: "+358", country: "Finland" },
+  { code: "+359", country: "Bulgaria" },
+  { code: "+370", country: "Lithuania" },
+  { code: "+371", country: "Latvia" },
+  { code: "+372", country: "Estonia" },
+  { code: "+373", country: "Moldova" },
+  { code: "+374", country: "Armenia" },
+  { code: "+375", country: "Belarus" },
+  { code: "+376", country: "Andorra" },
+  { code: "+377", country: "Monaco" },
+  { code: "+378", country: "San Marino" },
+  { code: "+380", country: "Ukraine" },
+  { code: "+381", country: "Serbia" },
+  { code: "+382", country: "Montenegro" },
+  { code: "+385", country: "Croatia" },
+  { code: "+386", country: "Slovenia" },
+  { code: "+387", country: "Bosnia" },
+  { code: "+389", country: "North Macedonia" },
+  { code: "+420", country: "Czech Republic" },
+  { code: "+421", country: "Slovakia" },
+  { code: "+423", country: "Liechtenstein" },
+  { code: "+972", country: "Israel" },
+  { code: "+973", country: "Bahrain" },
+  { code: "+974", country: "Qatar" },
+  { code: "+975", country: "Bhutan" },
+  { code: "+976", country: "Mongolia" },
+  { code: "+977", country: "Nepal" },
+  { code: "+992", country: "Tajikistan" },
+  { code: "+993", country: "Turkmenistan" },
+  { code: "+994", country: "Azerbaijan" },
+  { code: "+995", country: "Georgia" },
+  { code: "+996", country: "Kyrgyzstan" },
+  { code: "+998", country: "Uzbekistan" }
+];
+
+const ImagePreview = ({ file, onRetake }: { file: File, onRetake: () => void }) => {
+  const [url, setUrl] = useState<string>('');
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+  
+  return (
+    <div className="relative w-full h-48 rounded-2xl overflow-hidden group border-2 border-emerald-500/50">
+      <img src={url} alt="Preview" className="w-full h-full object-cover absolute inset-0" />
+      <div 
+        onClick={(e) => { e.stopPropagation(); onRetake(); }}
+        className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer backdrop-blur-sm"
+      >
+        <Camera className="w-8 h-8 text-white mb-2" />
+        <span className="text-sm font-bold text-white uppercase tracking-wider">Retake Photo</span>
+      </div>
+    </div>
+  );
+};
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
@@ -31,6 +166,7 @@ export default function Auth() {
   const [formData, setFormData] = useState({
     // Contact & Login
     email: '',
+    countryCode: '+1',
     phone: '',
     password: '',
     
@@ -42,6 +178,8 @@ export default function Auth() {
     idType: 'passport',
     idNumber: '',
     selfie: null as File | null,
+    idFront: null as File | null,
+    idBack: null as File | null,
     
     // Residential
     address: '',
@@ -67,18 +205,19 @@ export default function Auth() {
 
   // Camera State
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [capturingType, setCapturingType] = useState<'selfie' | 'idFront' | 'idBack' | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
 
-  const startCamera = async () => {
+  const startCamera = async (type: 'selfie' | 'idFront' | 'idBack') => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: { ideal: type === 'selfie' ? 'user' : 'environment' } } 
+      });
       setCameraStream(stream);
+      setCapturingType(type);
       setIsCameraActive(true);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
     } catch (err) {
       console.error("Error accessing camera:", err);
       setError("Could not access camera. Please ensure you have granted camera permissions.");
@@ -91,10 +230,15 @@ export default function Auth() {
       setCameraStream(null);
     }
     setIsCameraActive(false);
+    setCapturingType(null);
+  };
+
+  const clearPhoto = (type: 'selfie' | 'idFront' | 'idBack') => {
+    setFormData(prev => ({ ...prev, [type]: null }));
   };
 
   const capturePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
+    if (videoRef.current && canvasRef.current && capturingType) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       canvas.width = video.videoWidth;
@@ -104,14 +248,22 @@ export default function Auth() {
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
         canvas.toBlob((blob) => {
           if (blob) {
-            const file = new File([blob], "selfie.jpg", { type: "image/jpeg" });
-            setFormData(prev => ({ ...prev, selfie: file }));
+            const fileName = `${capturingType}.jpg`;
+            const file = new File([blob], fileName, { type: "image/jpeg" });
+            setFormData(prev => ({ ...prev, [capturingType]: file }));
             stopCamera();
           }
         }, 'image/jpeg', 0.9);
       }
     }
   };
+
+  // Attach stream to video element when it mounts
+  useEffect(() => {
+    if (isCameraActive && cameraStream && videoRef.current) {
+      videoRef.current.srcObject = cameraStream;
+    }
+  }, [isCameraActive, cameraStream]);
 
   // Cleanup camera on unmount
   useEffect(() => {
@@ -128,9 +280,9 @@ export default function Auth() {
     setFormData(prev => ({ ...prev, [name]: val }));
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'selfie' | 'idFront' | 'idBack') => {
     if (e.target.files && e.target.files[0]) {
-      setFormData(prev => ({ ...prev, selfie: e.target.files![0] }));
+      setFormData(prev => ({ ...prev, [type]: e.target.files![0] }));
     }
   };
 
@@ -166,13 +318,16 @@ export default function Auth() {
           email: formData.email,
           firstName: formData.firstName,
           lastName: formData.lastName,
-          phone: formData.phone,
+          phone: `${formData.countryCode}${formData.phone}`,
           dob: formData.dob,
           nationality: formData.nationality,
           address: formData.address,
           country: formData.country,
           occupation: formData.occupation,
           employer: formData.employer,
+          bankAccountNumber: formData.bankAccountNumber,
+          taxResidency: formData.taxResidency,
+          verificationStatus: 'pending',
           createdAt: new Date().toISOString(),
           balance: 0,
           outcomeMode: 'normal',
@@ -219,17 +374,34 @@ export default function Auth() {
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-widest ml-1">Phone Number</label>
-              <div className="relative group">
-                <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600 group-focus-within:text-emerald-500 transition-colors" />
-                <input
-                  type="tel"
-                  name="phone"
-                  required
-                  value={formData.phone}
-                  onChange={handleInputChange}
-                  className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-2xl pl-12 pr-4 py-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all font-medium"
-                  placeholder="+1 (555) 000-0000"
-                />
+              <div className="flex gap-2">
+                <div className="relative w-32 group">
+                  <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600 group-focus-within:text-emerald-500 transition-colors" />
+                  <select
+                    name="countryCode"
+                    value={formData.countryCode}
+                    onChange={handleInputChange}
+                    className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-2xl pl-10 pr-2 py-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all font-medium appearance-none text-sm"
+                  >
+                    {countryCodes.map(c => (
+                      <option key={`${c.country}-${c.code}`} value={c.code}>
+                        {c.code} ({c.country})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="relative flex-1 group">
+                  <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600 group-focus-within:text-emerald-500 transition-colors" />
+                  <input
+                    type="tel"
+                    name="phone"
+                    required
+                    value={formData.phone}
+                    onChange={handleInputChange}
+                    className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-2xl pl-12 pr-4 py-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all font-medium"
+                    placeholder="555 000-0000"
+                  />
+                </div>
               </div>
             </div>
             <div className="space-y-2">
@@ -430,13 +602,12 @@ export default function Auth() {
         return (
           <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
             <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-widest ml-1">Bank Account Number</label>
+              <label className="text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-widest ml-1">Bank Account Number (Optional)</label>
               <div className="relative group">
                 <Landmark className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-600 group-focus-within:text-emerald-500 transition-colors" />
                 <input
                   type="text"
                   name="bankAccountNumber"
-                  required
                   value={formData.bankAccountNumber}
                   onChange={handleInputChange}
                   className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-2xl pl-12 pr-4 py-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all font-medium"
@@ -483,56 +654,116 @@ export default function Auth() {
       case 6: // Compliance & Legal
         return (
           <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-widest ml-1">Facial Verification (KYC)</label>
+            <div className="space-y-4">
+              <label className="text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-widest ml-1">Account Verification (KYC)</label>
               
-              {isCameraActive ? (
-                <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500 bg-black">
-                  <video 
-                    ref={videoRef} 
-                    autoPlay 
-                    playsInline 
-                    muted 
-                    className="w-full h-64 object-cover"
-                  />
-                  <canvas ref={canvasRef} className="hidden" />
-                  <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4">
-                    <button 
-                      type="button"
-                      onClick={stopCamera}
-                      className="p-3 bg-rose-500 text-white rounded-full hover:bg-rose-600 transition-colors"
-                    >
-                      <X className="w-6 h-6" />
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={capturePhoto}
-                      className="p-3 bg-emerald-500 text-zinc-950 rounded-full hover:bg-emerald-400 transition-colors"
-                    >
-                      <Camera className="w-6 h-6" />
-                    </button>
+              {/* Selfie / Passport Photo */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Selfie or Passport Photo</span>
+                {isCameraActive && capturingType === 'selfie' ? (
+                  <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500 bg-black">
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-48 object-cover" />
+                    <canvas ref={canvasRef} className="hidden" />
+                    <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4">
+                      <button type="button" onClick={stopCamera} className="p-2 bg-rose-500 text-white rounded-full"><X className="w-5 h-5" /></button>
+                      <button type="button" onClick={capturePhoto} className="p-2 bg-emerald-500 text-zinc-950 rounded-full"><Camera className="w-5 h-5" /></button>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div 
-                  onClick={startCamera}
-                  className="border-2 border-dashed border-zinc-800 rounded-2xl p-6 text-center hover:border-emerald-500/50 transition-colors cursor-pointer relative"
-                >
-                  {formData.selfie ? (
-                    <div className="flex flex-col items-center gap-2">
-                      <CheckCircle2 className="w-8 h-8 text-emerald-500" />
-                      <span className="text-sm font-medium text-white">Selfie Captured</span>
-                      <span className="text-xs text-zinc-500 mt-2">Click to retake</span>
+                ) : formData.selfie ? (
+                  <ImagePreview file={formData.selfie} onRetake={() => clearPhoto('selfie')} />
+                ) : (
+                  <div className="flex gap-2">
+                    <div 
+                      onClick={() => startCamera('selfie')}
+                      className="flex-1 border-2 border-dashed border-zinc-800 rounded-xl p-4 text-center hover:border-emerald-500/50 transition-colors cursor-pointer"
+                    >
+                      <div className="flex flex-col items-center gap-1">
+                        <Camera className="w-5 h-5 text-zinc-600" />
+                        <span className="text-[10px] text-zinc-500">Take Photo</span>
+                      </div>
                     </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-2">
-                      <Camera className="w-8 h-8 text-zinc-600" />
-                      <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Take Selfie</span>
-                      <span className="text-xs text-zinc-500 mt-2">Camera permission will be requested</span>
+                    <label className="flex-1 border-2 border-dashed border-zinc-800 rounded-xl p-4 text-center hover:border-emerald-500/50 transition-colors cursor-pointer">
+                      <input type="file" accept="image/*" onChange={(e) => handleFileChange(e, 'selfie')} className="hidden" />
+                      <div className="flex flex-col items-center gap-1">
+                        <Zap className="w-5 h-5 text-zinc-600" />
+                        <span className="text-[10px] text-zinc-500">Upload</span>
+                      </div>
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* ID Front */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Government ID Front</span>
+                {isCameraActive && capturingType === 'idFront' ? (
+                  <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500 bg-black">
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-48 object-cover" />
+                    <canvas ref={canvasRef} className="hidden" />
+                    <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4">
+                      <button type="button" onClick={stopCamera} className="p-2 bg-rose-500 text-white rounded-full"><X className="w-5 h-5" /></button>
+                      <button type="button" onClick={capturePhoto} className="p-2 bg-emerald-500 text-zinc-950 rounded-full"><Camera className="w-5 h-5" /></button>
                     </div>
-                  )}
-                </div>
-              )}
+                  </div>
+                ) : formData.idFront ? (
+                  <ImagePreview file={formData.idFront} onRetake={() => clearPhoto('idFront')} />
+                ) : (
+                  <div className="flex gap-2">
+                    <div 
+                      onClick={() => startCamera('idFront')}
+                      className="flex-1 border-2 border-dashed border-zinc-800 rounded-xl p-4 text-center hover:border-emerald-500/50 transition-colors cursor-pointer"
+                    >
+                      <div className="flex flex-col items-center gap-1">
+                        <Camera className="w-5 h-5 text-zinc-600" />
+                        <span className="text-[10px] text-zinc-500">Take Photo</span>
+                      </div>
+                    </div>
+                    <label className="flex-1 border-2 border-dashed border-zinc-800 rounded-xl p-4 text-center hover:border-emerald-500/50 transition-colors cursor-pointer">
+                      <input type="file" accept="image/*" onChange={(e) => handleFileChange(e, 'idFront')} className="hidden" />
+                      <div className="flex flex-col items-center gap-1">
+                        <Zap className="w-5 h-5 text-zinc-600" />
+                        <span className="text-[10px] text-zinc-500">Upload</span>
+                      </div>
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* ID Back */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-bold text-zinc-500 uppercase ml-1">Government ID Back</span>
+                {isCameraActive && capturingType === 'idBack' ? (
+                  <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500 bg-black">
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-48 object-cover" />
+                    <canvas ref={canvasRef} className="hidden" />
+                    <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4">
+                      <button type="button" onClick={stopCamera} className="p-2 bg-rose-500 text-white rounded-full"><X className="w-5 h-5" /></button>
+                      <button type="button" onClick={capturePhoto} className="p-2 bg-emerald-500 text-zinc-950 rounded-full"><Camera className="w-5 h-5" /></button>
+                    </div>
+                  </div>
+                ) : formData.idBack ? (
+                  <ImagePreview file={formData.idBack} onRetake={() => clearPhoto('idBack')} />
+                ) : (
+                  <div className="flex gap-2">
+                    <div 
+                      onClick={() => startCamera('idBack')}
+                      className="flex-1 border-2 border-dashed border-zinc-800 rounded-xl p-4 text-center hover:border-emerald-500/50 transition-colors cursor-pointer"
+                    >
+                      <div className="flex flex-col items-center gap-1">
+                        <Camera className="w-5 h-5 text-zinc-600" />
+                        <span className="text-[10px] text-zinc-500">Take Photo</span>
+                      </div>
+                    </div>
+                    <label className="flex-1 border-2 border-dashed border-zinc-800 rounded-xl p-4 text-center hover:border-emerald-500/50 transition-colors cursor-pointer">
+                      <input type="file" accept="image/*" onChange={(e) => handleFileChange(e, 'idBack')} className="hidden" />
+                      <div className="flex flex-col items-center gap-1">
+                        <Zap className="w-5 h-5 text-zinc-600" />
+                        <span className="text-[10px] text-zinc-500">Upload</span>
+                      </div>
+                    </label>
+                  </div>
+                )}
+              </div>
             </div>
             
             <div className="space-y-3 pt-2">
@@ -588,11 +819,10 @@ export default function Auth() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-widest ml-1">Tax Residency Info</label>
+                <label className="text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-widest ml-1">Tax Residency Info (Optional)</label>
                 <input
                   type="text"
                   name="taxResidency"
-                  required
                   value={formData.taxResidency}
                   onChange={handleInputChange}
                   className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all text-sm"
