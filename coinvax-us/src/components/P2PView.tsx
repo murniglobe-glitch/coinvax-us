@@ -44,7 +44,7 @@ interface ChatMessage {
   createdAt: number;
 }
 
-const generateP2POrders = () => {
+const generateP2POrders = (currentUid: string) => {
   const assets = ['BTC', 'ETH', 'USDT', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE'];
   const types = ['BUY', 'SELL'];
   const names = ['CryptoKing', 'TraderJoe', 'SatoshiFan', 'DiamondHands', 'MoonWalker', 'WhaleAlert', 'BullRun', 'BearMarket', 'Hodler', 'DayTrader', 'AlphaSeeker', 'CoinMaster', 'BlockBuilder', 'ChainLinker', 'DeFiDegen'];
@@ -59,7 +59,7 @@ const generateP2POrders = () => {
     const price = parseFloat((priceBase * (1 + (Math.random() * 0.04 - 0.02))).toFixed(2));
     
     orders.push({
-      uid: `mock-user-${i}`,
+      uid: currentUid, // Use current user's UID to satisfy security rules
       userName,
       type,
       asset,
@@ -79,26 +79,39 @@ import { writeBatch } from 'firebase/firestore';
 
 interface P2PViewProps {
   addNotification?: (title: string, message: string) => void;
+  defaultAsset?: string;
 }
 
-export default function P2PView({ addNotification }: P2PViewProps) {
-  const [p2pTab, setP2pTab] = useState<'BUY' | 'SELL'>('BUY');
+export default function P2PView({ addNotification, defaultAsset }: P2PViewProps) {
+  const getInitialCurrency = () => {
+    if (!defaultAsset) return 'USDT';
+    // Strip USDT from symbols like BTCUSDT, unless it's just USDT
+    if (defaultAsset === 'USDT') return 'USDT';
+    const stripped = defaultAsset.replace('USDT', '');
+    // Check if the stripped version is one of our supported P2P assets
+    const supported = ['BTC', 'ETH', 'USDT', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE'];
+    return supported.includes(stripped) ? stripped : 'USDT';
+  };
+
+  const [p2pTab, setP2pTab] = useState<'BUY' | 'SELL' | 'MY_ORDERS'>('BUY');
   const [p2pAmount, setP2pAmount] = useState('');
   const [p2pPrice, setP2pPrice] = useState('');
   const [p2pPaymentMethod, setP2pPaymentMethod] = useState('Bank Transfer');
-  const [p2pCurrency, setP2pCurrency] = useState('USDT');
+  const [p2pCurrency, setP2pCurrency] = useState(getInitialCurrency());
   const [p2pChatOpen, setP2pChatOpen] = useState(false);
   const [p2pChatMessages, setP2pChatMessages] = useState<ChatMessage[]>([]);
   const [p2pChatInput, setP2pChatInput] = useState('');
   const [p2pMatchedUser, setP2pMatchedUser] = useState<string | null>(null);
-  const [isTyping, setIsTyping] = useState(false);
+  const [isTyping, setIsTyping] = useState<number>(0);
   const [peerIsTyping, setPeerIsTyping] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isCurrentlyTypingInDb = useRef(false);
   const [selectedP2POrder, setSelectedP2POrder] = useState<P2POrder | null>(null);
   const [activeOrder, setActiveOrder] = useState<P2POrder | null>(null);
   const [allOrders, setAllOrders] = useState<P2POrder[]>([]);
+  const [myOrders, setMyOrders] = useState<P2POrder[]>([]);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
-  const [isSeeding, setIsSeeding] = useState(false);
+  const isSeedingRef = useRef(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -106,12 +119,10 @@ export default function P2PView({ addNotification }: P2PViewProps) {
   };
 
   const seedDatabase = async () => {
-    if (isSeeding) return;
-    setIsSeeding(true);
-    addNotification?.('Seeding Started', 'Populating 1200 P2P orders to Firebase...');
-    
+    if (!auth.currentUser || isSeedingRef.current) return;
+    isSeedingRef.current = true;
     try {
-      const orders = generateP2POrders();
+      const orders = generateP2POrders(auth.currentUser.uid);
       const batchSize = 500;
       for (let i = 0; i < orders.length; i += batchSize) {
         const batch = writeBatch(db);
@@ -121,14 +132,11 @@ export default function P2PView({ addNotification }: P2PViewProps) {
           batch.set(newDocRef, order);
         });
         await batch.commit();
-        console.log(`Seeded ${i + chunk.length} orders...`);
       }
-      addNotification?.('Seeding Complete', '1200 orders successfully added to Firebase.');
     } catch (error) {
       console.error("Error seeding database:", error);
-      addNotification?.('Error', 'Failed to seed P2P orders');
     } finally {
-      setIsSeeding(false);
+      isSeedingRef.current = false;
     }
   };
 
@@ -171,10 +179,13 @@ export default function P2PView({ addNotification }: P2PViewProps) {
     const q = query(
       collection(db, 'p2p_orders'),
       where('status', '==', 'OPEN'),
-      limit(2000)
+      limit(100)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (snapshot.empty) {
+        seedDatabase();
+      }
       const orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as P2POrder));
       orders.sort((a, b) => b.createdAt - a.createdAt);
       setAllOrders(orders);
@@ -185,7 +196,24 @@ export default function P2PView({ addNotification }: P2PViewProps) {
       }
     });
 
-    return () => unsubscribe();
+    // Listen to user's own orders (all statuses)
+    const qMyOrders = query(
+      collection(db, 'p2p_orders'),
+      where('uid', '==', auth.currentUser?.uid),
+      limit(50)
+    );
+
+    const unsubscribeMyOrders = onSnapshot(qMyOrders, (snapshot) => {
+      const orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as P2POrder));
+      setMyOrders(orders.sort((a, b) => b.createdAt - a.createdAt));
+    }, (error) => {
+      console.error("Error in My P2P orders listener:", error);
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeMyOrders();
+    };
   }, []);
 
   // Listen to active order and its chat
@@ -241,22 +269,24 @@ export default function P2PView({ addNotification }: P2PViewProps) {
     if (!activeOrder || !auth.currentUser || !p2pChatOpen) return;
 
     const updateTypingStatus = async (typing: boolean) => {
+      if (isCurrentlyTypingInDb.current === typing) return;
       try {
         const orderRef = doc(db, 'p2p_orders', activeOrder.id);
         await updateDoc(orderRef, {
           [`typingStatus.${auth.currentUser?.uid}`]: typing,
           updatedAt: Date.now()
         });
+        isCurrentlyTypingInDb.current = typing;
       } catch (error) {
         console.error("Error updating typing status:", error);
       }
     };
 
-    if (isTyping) {
+    if (isTyping > 0) {
       updateTypingStatus(true);
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = setTimeout(() => {
-        setIsTyping(false);
+        setIsTyping(0);
         updateTypingStatus(false);
       }, 3000);
     }
@@ -374,6 +404,14 @@ export default function P2PView({ addNotification }: P2PViewProps) {
 
       await addDoc(collection(db, 'p2p_chats', activeOrder.id, 'messages'), messageData);
       setP2pChatInput('');
+      setIsTyping(0);
+      // Immediately clear typing status in DB
+      const orderRef = doc(db, 'p2p_orders', activeOrder.id);
+      await updateDoc(orderRef, {
+        [`typingStatus.${auth.currentUser?.uid}`]: false,
+        updatedAt: Date.now()
+      });
+      isCurrentlyTypingInDb.current = false;
     } catch (error) {
       console.error("Error sending P2P message:", error);
     }
@@ -386,18 +424,10 @@ export default function P2PView({ addNotification }: P2PViewProps) {
           <Users className="w-8 h-8 text-emerald-500" />
           P2P TRADING
         </h2>
-        <button 
-          onClick={seedDatabase}
-          disabled={isSeeding}
-          className="text-xs font-bold px-4 py-2 rounded-lg bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-colors flex items-center gap-2 disabled:opacity-50"
-        >
-          {isSeeding ? <Loader2 className="w-3 h-3 animate-spin" /> : <History className="w-3 h-3" />}
-          Seed 1200 Orders to Firebase
-        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1 flex flex-col gap-6">
+      <div className="flex flex-col gap-8">
+        <div className="w-full flex flex-col gap-6">
           {!p2pChatOpen ? (
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-6">
               <div className="flex bg-zinc-950 rounded-xl p-1 mb-6">
@@ -413,15 +443,88 @@ export default function P2PView({ addNotification }: P2PViewProps) {
                 >
                   I Want to Sell
                 </button>
+                <button 
+                  onClick={() => setP2pTab('MY_ORDERS')}
+                  className={cn("flex-1 py-2 text-sm font-bold rounded-lg transition-all", p2pTab === 'MY_ORDERS' ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white")}
+                >
+                  My Orders
+                </button>
               </div>
 
-              <div className="space-y-4">
+              {p2pTab === 'MY_ORDERS' ? (
+                <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                  {myOrders.length === 0 ? (
+                    <div className="text-center py-12 bg-zinc-950/50 rounded-2xl border border-zinc-800/50">
+                      <div className="w-16 h-16 bg-zinc-900 rounded-full flex items-center justify-center mx-auto mb-4 text-zinc-700">
+                        <History className="w-8 h-8" />
+                      </div>
+                      <p className="text-zinc-500">You haven't created any P2P orders yet.</p>
+                      <button 
+                        onClick={() => setP2pTab('BUY')}
+                        className="mt-4 text-emerald-500 hover:text-emerald-400 font-bold text-sm"
+                      >
+                        Create your first order
+                      </button>
+                    </div>
+                  ) : (
+                    myOrders.map(order => (
+                      <div key={order.id} className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 flex justify-between items-center hover:border-zinc-700 transition-all group">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded", order.type === 'BUY' ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500")}>
+                              {order.type}
+                            </span>
+                            <span className="font-bold text-white">{order.asset}</span>
+                          </div>
+                          <div className="text-sm mt-1">
+                            <span className="text-zinc-500">Amount:</span> <span className="text-white">{order.amount}</span>
+                          </div>
+                          <div className="text-sm">
+                            <span className="text-zinc-500">Price:</span> <span className="text-white">${order.price.toLocaleString()}</span>
+                          </div>
+                          <div className="text-[10px] text-zinc-500 mt-2">
+                            {format(new Date(order.createdAt), 'MMM dd, HH:mm')}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className={cn("text-xs font-bold uppercase tracking-wider mb-2", 
+                            order.status === 'OPEN' ? "text-emerald-500" : 
+                            order.status === 'MATCHED' ? "text-amber-500" : 
+                            order.status === 'COMPLETED' ? "text-blue-500" : "text-zinc-500"
+                          )}>
+                            {order.status}
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            {order.status === 'OPEN' && (
+                              <button 
+                                onClick={() => cancelOrder(order.id)}
+                                className="text-xs font-bold px-3 py-1.5 rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition-all border border-rose-500/20"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                            {order.status === 'MATCHED' && (
+                              <button 
+                                onClick={() => setActiveOrder(order)}
+                                className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white transition-all border border-emerald-500/20"
+                              >
+                                Chat
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
                 <div>
                   <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2 block">Asset</label>
                   <select 
                     value={p2pCurrency}
                     onChange={(e) => setP2pCurrency(e.target.value)}
-                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 appearance-none font-bold"
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 px-4 text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 appearance-none font-bold"
                   >
                     <option value="BTC">BTC</option>
                     <option value="ETH">ETH</option>
@@ -438,7 +541,7 @@ export default function P2PView({ addNotification }: P2PViewProps) {
                     value={p2pAmount}
                     onChange={(e) => setP2pAmount(e.target.value)}
                     placeholder="0.00"
-                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 px-4 text-white placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black"
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 px-4 text-zinc-900 dark:text-white placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black"
                   />
                 </div>
 
@@ -449,7 +552,7 @@ export default function P2PView({ addNotification }: P2PViewProps) {
                     value={p2pPrice}
                     onChange={(e) => setP2pPrice(e.target.value)}
                     placeholder="0.00"
-                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 px-4 text-white placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black"
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 px-4 text-zinc-900 dark:text-white placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-sans font-black"
                   />
                 </div>
 
@@ -458,7 +561,7 @@ export default function P2PView({ addNotification }: P2PViewProps) {
                   <select 
                     value={p2pPaymentMethod}
                     onChange={(e) => setP2pPaymentMethod(e.target.value)}
-                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 appearance-none font-bold"
+                    className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl py-3 px-4 text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 appearance-none font-bold"
                   >
                     <option value="Bank Transfer">Bank Transfer</option>
                     <option value="PayPal">PayPal</option>
@@ -471,22 +574,30 @@ export default function P2PView({ addNotification }: P2PViewProps) {
 
                 <button 
                   onClick={handleP2pSubmit}
-                  disabled={!p2pAmount || Number(p2pAmount) <= 0 || !p2pPrice || Number(p2pPrice) <= 0}
+                  disabled={isCreatingOrder || !p2pAmount || Number(p2pAmount) <= 0 || !p2pPrice || Number(p2pPrice) <= 0}
                   className={cn(
                     "w-full font-bold py-4 rounded-xl mt-2 transition-colors flex items-center justify-center gap-2 disabled:opacity-50",
                     p2pTab === 'BUY' ? "bg-emerald-500 hover:bg-emerald-400 text-zinc-950" : "bg-rose-500 hover:bg-rose-400 text-zinc-950"
                   )}
                 >
-                  Create {p2pTab} Offer
+                  {isCreatingOrder ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Creating Offer...
+                    </>
+                  ) : (
+                    <>Create {p2pTab} Offer</>
+                  )}
                 </button>
               </div>
-            </div>
-          ) : (
+            )}
+          </div>
+        ) : (
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col h-[500px]">
               <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950 rounded-t-2xl">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center">
-                    <User className="w-5 h-5 text-zinc-400 dark:text-zinc-500 dark:text-zinc-400" />
+                    <User className="w-5 h-5 text-zinc-900 dark:text-zinc-400" />
                   </div>
                   <div>
                     <h3 className="font-bold">{p2pMatchedUser || 'Waiting for Match...'}</h3>
@@ -537,11 +648,11 @@ export default function P2PView({ addNotification }: P2PViewProps) {
                   value={p2pChatInput}
                   onChange={(e) => {
                     setP2pChatInput(e.target.value);
-                    setIsTyping(true);
+                    setIsTyping(Date.now());
                   }}
                   placeholder={p2pMatchedUser ? "Type a message..." : "Waiting for peer..."}
                   disabled={!p2pMatchedUser}
-                  className="flex-1 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
+                  className="flex-1 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
                 />
                 <button type="submit" disabled={!p2pMatchedUser} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-950 p-3 rounded-xl transition-colors flex items-center justify-center disabled:opacity-50">
                   <Send className="w-5 h-5" />
@@ -551,7 +662,7 @@ export default function P2PView({ addNotification }: P2PViewProps) {
           )}
         </div>
 
-        <div className="lg:col-span-2 flex flex-col gap-4">
+        <div className="w-full flex flex-col gap-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col sm:flex-row flex-wrap gap-3 items-center justify-between">
             <div className="flex items-center gap-2 bg-zinc-950 rounded-lg px-3 py-2 border border-zinc-800 w-full sm:flex-1 sm:min-w-[200px]">
               <Search className="w-4 h-4 text-zinc-500" />
@@ -598,13 +709,13 @@ export default function P2PView({ addNotification }: P2PViewProps) {
                 <option value="Wise">Wise</option>
                 <option value="Cash App">Cash App</option>
               </select>
-              <div className="flex items-center gap-1 w-full sm:w-auto mt-2 sm:mt-0">
+              <div className="flex items-center gap-1 w-auto">
                 <input 
                   type="number" 
                   placeholder="Min" 
                   value={p2pMinAmount}
                   onChange={(e) => setP2pMinAmount(e.target.value)}
-                  className="flex-1 sm:w-20 py-2 px-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm focus:outline-none focus:border-emerald-500 transition-colors text-zinc-900 dark:text-white"
+                  className="w-16 sm:w-20 py-2 px-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg text-xs focus:outline-none focus:border-emerald-500 transition-colors text-zinc-900 dark:text-white"
                 />
                 <span className="text-zinc-500">-</span>
                 <input 
@@ -612,7 +723,7 @@ export default function P2PView({ addNotification }: P2PViewProps) {
                   placeholder="Max" 
                   value={p2pMaxAmount}
                   onChange={(e) => setP2pMaxAmount(e.target.value)}
-                  className="flex-1 sm:w-20 py-2 px-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm focus:outline-none focus:border-emerald-500 transition-colors text-zinc-900 dark:text-white"
+                  className="w-16 sm:w-20 py-2 px-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg text-xs focus:outline-none focus:border-emerald-500 transition-colors text-zinc-900 dark:text-white"
                 />
               </div>
             </div>

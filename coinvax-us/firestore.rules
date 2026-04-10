@@ -193,6 +193,15 @@ service cloud.firestore {
              data.createdAt is number;
     }
 
+    function isValidTransfer(data) {
+      return hasRequiredFields(['uid', 'fromAccount', 'toAccount', 'amount', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             data.amount is number && data.amount > 0 &&
+             data.fromAccount is string &&
+             data.toAccount is string &&
+             data.createdAt is number;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -217,8 +226,8 @@ service cloud.firestore {
     }
 
     match /p2p_orders/{orderId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid && isValidP2POrder(request.resource.data);
+      allow read: if isAuthenticated() && (resource == null || resource.data.uid == request.auth.uid || resource.data.matchedWith == request.auth.uid || resource.data.status == 'OPEN' || isAdmin());
+      allow create: if isAuthenticated() && (request.resource.data.uid == request.auth.uid || isAdmin()) && isValidP2POrder(request.resource.data);
       allow update: if isAuthenticated() && (
                       (resource.data.uid == request.auth.uid && isValidP2POrder(request.resource.data)) ||
                       (resource.data.status == 'OPEN' && request.resource.data.status == 'MATCHED' && request.resource.data.matchedWith == request.auth.uid) ||
@@ -302,6 +311,17 @@ service cloud.firestore {
                       request.resource.data.notified == true
                     );
       allow delete: if isAdmin();
+    }
+
+    match /transfers/{transferId} {
+      allow read: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.uid == request.auth.uid));
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid && isValidTransfer(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Connectivity test path
+    match /test/connection {
+      allow read: if true;
     }
   }
 }

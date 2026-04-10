@@ -143,6 +143,19 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["uid", "amount", "method", "status", "createdAt"]
+    },
+    "Transfer": {
+      "title": "Transfer",
+      "description": "An internal transfer between user accounts.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "fromAccount": { "type": "string" },
+        "toAccount": { "type": "string" },
+        "amount": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["uid", "fromAccount", "toAccount", "amount", "createdAt"]
     }
   },
   "firestore": {
@@ -177,6 +190,14 @@
     "/deposits/{depositId}": {
       "schema": "Deposit",
       "description": "All deposit requests."
+    },
+    "/transfers/{transferId}": {
+      "schema": "Transfer",
+      "description": "All internal transfers."
+    },
+    "/test/connection": {
+      "schema": { "title": "TestConnection", "type": "object", "properties": {} },
+      "description": "Path used to verify Firestore connectivity."
     }
   }
 }

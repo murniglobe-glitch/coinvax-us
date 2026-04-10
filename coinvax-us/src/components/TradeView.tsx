@@ -60,8 +60,8 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
-type Asset = 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT' | 'BNBUSDT' | 'XRPUSDT';
-const ASSETS: Asset[] = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'];
+export type Asset = 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT' | 'BNBUSDT' | 'XRPUSDT';
+export const ASSETS: Asset[] = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'];
 type Direction = 'UP' | 'DOWN';
 type TradeStatus = 'ACTIVE' | 'WON' | 'LOST' | 'TIE';
 type TimeRange = '1m' | '1h' | '6h' | '1d';
@@ -97,10 +97,11 @@ interface TradeViewProps {
   balance: number;
   setBalance: (updater: number | ((prev: number) => number)) => void;
   addNotification?: (title: string, message: string) => void;
+  currentAsset: Asset;
+  setCurrentAsset: (asset: Asset) => void;
 }
 
-export default function TradeView({ user, balance, setBalance, addNotification }: TradeViewProps) {
-  const [currentAsset, setCurrentAsset] = useState<Asset>('BTCUSDT');
+export default function TradeView({ user, balance, setBalance, addNotification, currentAsset, setCurrentAsset }: TradeViewProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>('1m');
   const [prices, setPrices] = useState<Record<Asset, number>>(
     ASSETS.reduce((acc, asset) => ({ ...acc, [asset]: 0 }), {} as Record<Asset, number>)
@@ -114,6 +115,7 @@ export default function TradeView({ user, balance, setBalance, addNotification }
   
   const [tradeAmount, setTradeAmount] = useState(100);
   const [expirySeconds, setExpirySeconds] = useState(60);
+  const [selectedDirection, setSelectedDirection] = useState<Direction>('UP');
   const [pendingTrade, setPendingTrade] = useState<Direction | null>(null);
   
   const [activeTrades, setActiveTrades] = useState<Trade[]>([]);
@@ -179,7 +181,7 @@ export default function TradeView({ user, balance, setBalance, addNotification }
       osc.start();
       osc.stop(ctx.currentTime + 0.5);
     } catch (e) {
-      console.error('Audio play failed', e);
+      console.warn('Audio play failed (likely browser restriction):', e);
     }
   };
 
@@ -246,10 +248,11 @@ export default function TradeView({ user, balance, setBalance, addNotification }
       let interval = '1s';
       let limit = 60;
       switch (timeRange) {
+        case '1m': interval = '1m'; limit = 60; break;
         case '1h': interval = '1m'; limit = 60; break;
         case '6h': interval = '5m'; limit = 72; break;
         case '1d': interval = '15m'; limit = 96; break;
-        default: interval = '1s'; limit = 60; break;
+        default: interval = '1m'; limit = 60; break;
       }
       
       try {
@@ -1042,6 +1045,37 @@ export default function TradeView({ user, balance, setBalance, addNotification }
               </div>
             </div>
 
+            {/* Direction Selection */}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 font-medium">Trade Direction</label>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setSelectedDirection('UP')}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2",
+                    selectedDirection === 'UP' 
+                      ? "bg-emerald-500/10 border-emerald-500 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]" 
+                      : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:bg-zinc-800"
+                  )}
+                >
+                  <TrendingUp className="w-4 h-4" />
+                  UP
+                </button>
+                <button 
+                  onClick={() => setSelectedDirection('DOWN')}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2",
+                    selectedDirection === 'DOWN' 
+                      ? "bg-rose-500/10 border-rose-500 text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.1)]" 
+                      : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:bg-zinc-800"
+                  )}
+                >
+                  <TrendingDown className="w-4 h-4" />
+                  DOWN
+                </button>
+              </div>
+            </div>
+
             {/* Payout Info */}
             <div className="bg-zinc-950 rounded-xl p-4 border border-zinc-800 flex justify-between items-center">
               <div className="group relative flex items-center gap-1.5">
@@ -1060,23 +1094,39 @@ export default function TradeView({ user, balance, setBalance, addNotification }
             </div>
 
             {/* Action Buttons */}
-            <div className="flex flex-row gap-3 mt-2">
+            <div className="flex flex-col gap-3 mt-2">
               <button 
-                onClick={() => placeTrade('UP')}
-                disabled={prices[currentAsset] === 0 || balance < tradeAmount}
-                className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-base py-3 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:shadow-[0_0_25px_rgba(16,185,129,0.4)]"
+                onClick={() => placeTrade(selectedDirection)}
+                disabled={prices[currentAsset] === 0 || balance < tradeAmount || tradeAmount < 100}
+                className={cn(
+                  "w-full font-bold text-base py-4 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-xl",
+                  selectedDirection === 'UP' 
+                    ? "bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-emerald-500/20" 
+                    : "bg-rose-500 hover:bg-rose-400 text-zinc-950 shadow-rose-500/20"
+                )}
               >
-                <TrendingUp className="w-5 h-5" />
-                BUY UP
+                {selectedDirection === 'UP' ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+                EXECUTE OPTIONS TRADE
               </button>
-              <button 
-                onClick={() => placeTrade('DOWN')}
-                disabled={prices[currentAsset] === 0 || balance < tradeAmount}
-                className="flex-1 bg-rose-500 hover:bg-rose-400 text-zinc-950 font-bold text-base py-3 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(244,63,94,0.2)] hover:shadow-[0_0_25px_rgba(244,63,94,0.4)]"
-              >
-                <TrendingDown className="w-5 h-5" />
-                SELL DOWN
-              </button>
+              
+              <div className="flex flex-row gap-3">
+                <button 
+                  onClick={() => placeTrade('UP')}
+                  disabled={prices[currentAsset] === 0 || balance < tradeAmount}
+                  className="flex-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <TrendingUp className="w-4 h-4" />
+                  QUICK UP
+                </button>
+                <button 
+                  onClick={() => placeTrade('DOWN')}
+                  disabled={prices[currentAsset] === 0 || balance < tradeAmount}
+                  className="flex-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/50 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <TrendingDown className="w-4 h-4" />
+                  QUICK DOWN
+                </button>
+              </div>
             </div>
 
             {/* Active Trades Widget */}
