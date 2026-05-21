@@ -2,13 +2,20 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   Mail, Lock, User, ArrowRight, Bitcoin, Shield, Zap, Phone, Globe, 
   Calendar, MapPin, Briefcase, DollarSign, CreditCard, Camera, 
-  CheckCircle2, ArrowLeft, Landmark, Eye, EyeOff, AlertCircle, X
+  CheckCircle2, ArrowLeft, Landmark, Eye, EyeOff, AlertCircle, X,
+  Apple, Smartphone
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import Logo from './Logo';
-import { auth, db } from '../firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { 
+  auth, 
+  db, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  updateProfile,
+  doc, 
+  setDoc 
+} from '../firebase';
 
 type SignupStep = 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -212,6 +219,8 @@ export default function Auth() {
 
   const startCamera = async (type: 'selfie' | 'idFront' | 'idBack') => {
     try {
+      // Note: Camera permission must be added to metadata.json for this to work in the AI Studio preview.
+      // It was removed to prevent the permission prompt from appearing on every visit.
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { facingMode: { ideal: type === 'selfie' ? 'user' : 'environment' } } 
       });
@@ -220,7 +229,7 @@ export default function Auth() {
       setIsCameraActive(true);
     } catch (err) {
       console.error("Error accessing camera:", err);
-      setError("Could not access camera. Please ensure you have granted camera permissions.");
+      setError("Could not access camera. Please ensure you have granted camera permissions in the app settings (metadata.json).");
     }
   };
 
@@ -300,10 +309,58 @@ export default function Auth() {
 
     setLoading(true);
     
+    const fileToBase64 = (file: File): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = error => reject(error);
+      });
+    };
+
     try {
       if (isLogin) {
         await signInWithEmailAndPassword(auth, formData.email, formData.password);
       } else {
+        let selfieUrl = '';
+        let idFrontUrl = '';
+        let idBackUrl = '';
+
+        try {
+          if (formData.selfie) {
+            const b64 = await fileToBase64(formData.selfie);
+            const res = await fetch('/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image: b64, folder: 'selfies' })
+            });
+            const data = await res.json();
+            if (data.secure_url) selfieUrl = data.secure_url;
+          }
+          if (formData.idFront) {
+            const b64 = await fileToBase64(formData.idFront);
+            const res = await fetch('/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image: b64, folder: 'id_documents' })
+            });
+            const data = await res.json();
+            if (data.secure_url) idFrontUrl = data.secure_url;
+          }
+          if (formData.idBack) {
+            const b64 = await fileToBase64(formData.idBack);
+            const res = await fetch('/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image: b64, folder: 'id_documents' })
+            });
+            const data = await res.json();
+            if (data.secure_url) idBackUrl = data.secure_url;
+          }
+        } catch (uploadErr) {
+          console.warn("Cloudinary upload failed, using automatic fallback:", uploadErr);
+        }
+
         const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
         const user = userCredential.user;
 
@@ -312,7 +369,7 @@ export default function Auth() {
           displayName: `${formData.firstName} ${formData.lastName}`,
         });
 
-        // Save extra data to Firestore
+        // Save extra data to Database
         await setDoc(doc(db, 'users', user.uid), {
           uid: user.uid,
           email: formData.email,
@@ -328,6 +385,9 @@ export default function Auth() {
           bankAccountNumber: formData.bankAccountNumber,
           taxResidency: formData.taxResidency,
           verificationStatus: 'pending',
+          selfieUrl,
+          idFrontUrl,
+          idBackUrl,
           createdAt: new Date().toISOString(),
           balance: 0,
           outcomeMode: 'normal',
@@ -949,6 +1009,39 @@ export default function Auth() {
               </button>
             </div>
           )}
+        </div>
+
+        {/* App Download Section */}
+        <div className="w-full flex flex-col items-center gap-6 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300">
+          <p className="text-zinc-500 text-sm font-medium">Get the COINVAX US mobile app</p>
+          <div className="flex flex-row gap-2 sm:gap-4 items-center justify-center">
+            <a 
+              href="https://apps.apple.com" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="transition-transform hover:scale-105 active:scale-95"
+            >
+              <img 
+                src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83&releaseDate=1276550400&h=7a5b08530ef73739999c923142f17384" 
+                alt="Download on the App Store" 
+                className="h-[36px] sm:h-[44px] w-auto"
+                referrerPolicy="no-referrer"
+              />
+            </a>
+            <a 
+              href="https://play.google.com" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="transition-transform hover:scale-105 active:scale-95"
+            >
+              <img 
+                src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" 
+                alt="Get it on Google Play" 
+                className="h-[52px] sm:h-[64px] w-auto -my-2 sm:-my-2.5" 
+                referrerPolicy="no-referrer"
+              />
+            </a>
+          </div>
         </div>
       </div>
     </div>

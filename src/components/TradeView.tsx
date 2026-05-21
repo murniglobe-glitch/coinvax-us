@@ -4,8 +4,7 @@ import { TrendingUp, TrendingDown, DollarSign, Clock, Activity, History, Sliders
 import { format } from 'date-fns';
 import { cn } from '../lib/utils';
 import { fetchBinance } from '../lib/api';
-import { db, auth } from '../firebase';
-import { collection, addDoc, query, where, onSnapshot, orderBy, limit, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { db, auth, collection, addDoc, query, where, onSnapshot, orderBy, limit, updateDoc, doc, serverTimestamp } from '../firebase';
 import { toPng } from 'html-to-image';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -60,11 +59,90 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
-type Asset = 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT' | 'BNBUSDT' | 'XRPUSDT';
-const ASSETS: Asset[] = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'];
+export type Asset = 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT' | 'BNBUSDT' | 'XRPUSDT';
+export const ASSETS: Asset[] = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'];
 type Direction = 'UP' | 'DOWN';
 type TradeStatus = 'ACTIVE' | 'WON' | 'LOST' | 'TIE';
-type TimeRange = '1m' | '1h' | '6h' | '1d';
+type TimeRange = string;
+
+const getIntervalAndLimit = (range: string) => {
+  let interval = '1m';
+  let limit = 60;
+  let intervalMs = 60000;
+
+  switch (range) {
+    case '1m':
+      interval = '1m';
+      limit = 60;
+      intervalMs = 1000;
+      break;
+    case '5m':
+      interval = '1m';
+      limit = 5;
+      intervalMs = 60000;
+      break;
+    case '15m':
+      interval = '1m';
+      limit = 15;
+      intervalMs = 60000;
+      break;
+    case '30m':
+      interval = '1m';
+      limit = 30;
+      intervalMs = 60000;
+      break;
+    case '1h':
+      interval = '1m';
+      limit = 60;
+      intervalMs = 60000;
+      break;
+    case '4h':
+      interval = '5m';
+      limit = 48;
+      intervalMs = 300000;
+      break;
+    case '6h':
+      interval = '5m';
+      limit = 72;
+      intervalMs = 300000;
+      break;
+    case '12h':
+      interval = '15m';
+      limit = 48;
+      intervalMs = 900000;
+      break;
+    case '1d':
+      interval = '15m';
+      limit = 96;
+      intervalMs = 900000;
+      break;
+    default:
+      if (range.endsWith('m')) {
+        const val = parseInt(range) || 60;
+        interval = val <= 15 ? '1m' : '5m';
+        limit = val <= 15 ? val : Math.max(12, Math.floor(val / 5));
+        intervalMs = val <= 15 ? 60000 : 300000;
+      } else if (range.endsWith('h')) {
+        const val = parseInt(range) || 1;
+        if (val <= 2) {
+          interval = '1m';
+          limit = val * 60;
+          intervalMs = 60000;
+        } else {
+          interval = '5m';
+          limit = Math.floor((val * 60) / 5);
+          intervalMs = 300000;
+        }
+      } else if (range.endsWith('d')) {
+        const val = parseInt(range) || 1;
+        interval = '15m';
+        limit = Math.floor((val * 24 * 60) / 15);
+        intervalMs = 900000;
+      }
+      break;
+  }
+  return { interval, limit, intervalMs };
+};
 
 interface Trade {
   id: string;
@@ -97,11 +175,15 @@ interface TradeViewProps {
   balance: number;
   setBalance: (updater: number | ((prev: number) => number)) => void;
   addNotification?: (title: string, message: string) => void;
+  currentAsset: Asset;
+  setCurrentAsset: (asset: Asset) => void;
 }
 
-export default function TradeView({ user, balance, setBalance, addNotification }: TradeViewProps) {
-  const [currentAsset, setCurrentAsset] = useState<Asset>('BTCUSDT');
+export default function TradeView({ user, balance, setBalance, addNotification, currentAsset, setCurrentAsset }: TradeViewProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>('1m');
+  const [showCustomRangeSelector, setShowCustomRangeSelector] = useState(false);
+  const [customRangeValue, setCustomRangeValue] = useState('15');
+  const [customRangeUnit, setCustomRangeUnit] = useState<'m' | 'h' | 'd'>('m');
   const [prices, setPrices] = useState<Record<Asset, number>>(
     ASSETS.reduce((acc, asset) => ({ ...acc, [asset]: 0 }), {} as Record<Asset, number>)
   );
@@ -114,6 +196,7 @@ export default function TradeView({ user, balance, setBalance, addNotification }
   
   const [tradeAmount, setTradeAmount] = useState(100);
   const [expirySeconds, setExpirySeconds] = useState(60);
+  const [selectedDirection, setSelectedDirection] = useState<Direction>('UP');
   const [pendingTrade, setPendingTrade] = useState<Direction | null>(null);
   
   const [activeTrades, setActiveTrades] = useState<Trade[]>([]);
@@ -179,7 +262,7 @@ export default function TradeView({ user, balance, setBalance, addNotification }
       osc.start();
       osc.stop(ctx.currentTime + 0.5);
     } catch (e) {
-      console.error('Audio play failed', e);
+      console.warn('Audio play failed (likely browser restriction):', e);
     }
   };
 
@@ -243,14 +326,7 @@ export default function TradeView({ user, balance, setBalance, addNotification }
   // WebSocket & Historical Data
   useEffect(() => {
     const fetchHistory = async (symbol: Asset) => {
-      let interval = '1s';
-      let limit = 60;
-      switch (timeRange) {
-        case '1h': interval = '1m'; limit = 60; break;
-        case '6h': interval = '5m'; limit = 72; break;
-        case '1d': interval = '15m'; limit = 96; break;
-        default: interval = '1s'; limit = 60; break;
-      }
+      const { interval, limit } = getIntervalAndLimit(timeRange);
       
       try {
         const data = await fetchBinance(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
@@ -293,12 +369,7 @@ export default function TradeView({ user, balance, setBalance, addNotification }
         if (currentData.length === 0) return prev;
         
         const lastPoint = currentData[currentData.length - 1];
-        let intervalMs = 1000;
-        switch (timeRange) {
-          case '1h': intervalMs = 60000; break;
-          case '6h': intervalMs = 300000; break;
-          case '1d': intervalMs = 900000; break;
-        }
+        const { intervalMs, limit } = getIntervalAndLimit(timeRange);
         
         // If the new time is within the same interval, update the last point
         if (time - lastPoint.time < intervalMs) {
@@ -308,12 +379,6 @@ export default function TradeView({ user, balance, setBalance, addNotification }
         }
         
         // Otherwise, append a new point
-        let limit = 60;
-        switch (timeRange) {
-          case '1h': limit = 60; break;
-          case '6h': limit = 72; break;
-          case '1d': limit = 96; break;
-        }
         const newData = [...currentData, { time, price }].slice(-limit);
         return { ...prev, [symbol]: newData };
       });
@@ -690,19 +755,103 @@ export default function TradeView({ user, balance, setBalance, addNotification }
                   <BellRing className="w-3.5 h-3.5" />
                   Alerts ({alerts.filter(a => a.active).length})
                 </button>
-                <div className="flex bg-zinc-200 dark:bg-zinc-800 rounded-full p-0.5">
-                  {(['1m', '1h', '6h', '1d'] as TimeRange[]).map(range => (
+                <div className="flex bg-zinc-200 dark:bg-zinc-800 rounded-full p-0.5 relative items-center">
+                  {['1m', '1h', '6h', '1d'].map(range => (
                     <button
                       key={range}
-                      onClick={() => setTimeRange(range)}
+                      onClick={() => {
+                        setTimeRange(range);
+                        setShowCustomRangeSelector(false);
+                      }}
                       className={cn(
-                        "px-2.5 py-1 rounded-full text-xs font-bold transition-colors",
-                        timeRange === range ? "bg-zinc-700 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-300"
+                        "rounded-full text-xs transition-all duration-250 cursor-pointer",
+                        timeRange === range
+                          ? "bg-emerald-500 text-zinc-950 font-black px-3 py-1 shadow-[0_0_12px_rgba(16,185,129,0.4)] scale-105"
+                          : "text-zinc-400 hover:text-white hover:bg-zinc-700/30 px-2.5 py-1 font-semibold"
                       )}
                     >
                       {range}
                     </button>
                   ))}
+                  <button
+                    onClick={() => setShowCustomRangeSelector(!showCustomRangeSelector)}
+                    className={cn(
+                      "rounded-full text-xs transition-all duration-250 flex items-center gap-1 cursor-pointer ml-1",
+                      !['1m', '1h', '6h', '1d'].includes(timeRange)
+                        ? "bg-emerald-500 text-zinc-950 font-black px-3 py-1 shadow-[0_0_12px_rgba(16,185,129,0.4)] scale-105"
+                        : "text-zinc-400 hover:text-white hover:bg-zinc-700/30 px-2.5 py-1 font-semibold"
+                    )}
+                  >
+                    {!['1m', '1h', '6h', '1d'].includes(timeRange) ? `Custom (${timeRange})` : 'Custom...'}
+                  </button>
+
+                  {/* Popover / Panel for custom range */}
+                  {showCustomRangeSelector && (
+                    <div className="absolute right-0 bottom-full mb-2 bg-zinc-900 border border-zinc-850 rounded-2xl p-4 w-60 shadow-2xl z-50 flex flex-col gap-3 text-white border-zinc-850">
+                      <div className="flex justify-between items-center pb-2 border-b border-zinc-800">
+                        <span className="font-bold text-xs text-zinc-400 uppercase tracking-wider">Custom Time Range</span>
+                        <button onClick={() => setShowCustomRangeSelector(false)} className="text-zinc-500 hover:text-white">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      
+                      {/* Presets Grid */}
+                      <div className="grid grid-cols-2 gap-2">
+                        {['5m', '15m', '30m', '4h', '12h'].map(preset => (
+                          <button
+                            key={preset}
+                            onClick={() => {
+                              setTimeRange(preset);
+                              setShowCustomRangeSelector(false);
+                            }}
+                            className={cn(
+                              "py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer",
+                              timeRange === preset 
+                                ? "bg-emerald-500 border-emerald-500 text-zinc-950 shadow-md"
+                                : "bg-zinc-950 border-zinc-800 hover:border-zinc-700 text-zinc-300"
+                            )}
+                          >
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider mt-2">Or enter value:</div>
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          max="5000"
+                          value={customRangeValue}
+                          onChange={(e) => setCustomRangeValue(e.target.value)}
+                          className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-white text-center focus:outline-none focus:border-emerald-500"
+                        />
+                        <select
+                          value={customRangeUnit}
+                          onChange={(e: any) => setCustomRangeUnit(e.target.value)}
+                          className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        >
+                          <option value="m">Min</option>
+                          <option value="h">Hr</option>
+                          <option value="d">Day</option>
+                        </select>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          const valStr = customRangeValue.trim();
+                          if (valStr) {
+                            const rangeStr = `${valStr}${customRangeUnit}`;
+                            setTimeRange(rangeStr);
+                            setShowCustomRangeSelector(false);
+                          }
+                        }}
+                        className="w-full py-2 rounded-lg bg-emerald-500 text-zinc-950 font-black text-xs hover:bg-emerald-400 transition-colors shadow-md shadow-emerald-500/10 cursor-pointer"
+                      >
+                        Apply Custom
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <Activity className="w-4 h-4 text-emerald-500 animate-pulse ml-2" />
                 Live Market
@@ -1042,6 +1191,37 @@ export default function TradeView({ user, balance, setBalance, addNotification }
               </div>
             </div>
 
+            {/* Direction Selection */}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 font-medium">Trade Direction</label>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setSelectedDirection('UP')}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2",
+                    selectedDirection === 'UP' 
+                      ? "bg-emerald-500/10 border-emerald-500 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]" 
+                      : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:bg-zinc-800"
+                  )}
+                >
+                  <TrendingUp className="w-4 h-4" />
+                  UP
+                </button>
+                <button 
+                  onClick={() => setSelectedDirection('DOWN')}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2",
+                    selectedDirection === 'DOWN' 
+                      ? "bg-rose-500/10 border-rose-500 text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.1)]" 
+                      : "bg-zinc-950 border-zinc-800 text-zinc-500 hover:bg-zinc-800"
+                  )}
+                >
+                  <TrendingDown className="w-4 h-4" />
+                  DOWN
+                </button>
+              </div>
+            </div>
+
             {/* Payout Info */}
             <div className="bg-zinc-950 rounded-xl p-4 border border-zinc-800 flex justify-between items-center">
               <div className="group relative flex items-center gap-1.5">
@@ -1060,23 +1240,39 @@ export default function TradeView({ user, balance, setBalance, addNotification }
             </div>
 
             {/* Action Buttons */}
-            <div className="flex flex-row gap-3 mt-2">
+            <div className="flex flex-col gap-3 mt-2">
               <button 
-                onClick={() => placeTrade('UP')}
-                disabled={prices[currentAsset] === 0 || balance < tradeAmount}
-                className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-base py-3 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:shadow-[0_0_25px_rgba(16,185,129,0.4)]"
+                onClick={() => placeTrade(selectedDirection)}
+                disabled={prices[currentAsset] === 0 || balance < tradeAmount || tradeAmount < 100}
+                className={cn(
+                  "w-full font-bold text-base py-4 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-xl",
+                  selectedDirection === 'UP' 
+                    ? "bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-emerald-500/20" 
+                    : "bg-rose-500 hover:bg-rose-400 text-zinc-950 shadow-rose-500/20"
+                )}
               >
-                <TrendingUp className="w-5 h-5" />
-                BUY UP
+                {selectedDirection === 'UP' ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+                EXECUTE OPTIONS TRADE
               </button>
-              <button 
-                onClick={() => placeTrade('DOWN')}
-                disabled={prices[currentAsset] === 0 || balance < tradeAmount}
-                className="flex-1 bg-rose-500 hover:bg-rose-400 text-zinc-950 font-bold text-base py-3 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(244,63,94,0.2)] hover:shadow-[0_0_25px_rgba(244,63,94,0.4)]"
-              >
-                <TrendingDown className="w-5 h-5" />
-                SELL DOWN
-              </button>
+              
+              <div className="flex flex-row gap-3">
+                <button 
+                  onClick={() => placeTrade('UP')}
+                  disabled={prices[currentAsset] === 0 || balance < tradeAmount}
+                  className="flex-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <TrendingUp className="w-4 h-4" />
+                  QUICK UP
+                </button>
+                <button 
+                  onClick={() => placeTrade('DOWN')}
+                  disabled={prices[currentAsset] === 0 || balance < tradeAmount}
+                  className="flex-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/50 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <TrendingDown className="w-4 h-4" />
+                  QUICK DOWN
+                </button>
+              </div>
             </div>
 
             {/* Active Trades Widget */}

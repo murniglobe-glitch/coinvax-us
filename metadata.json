@@ -3,5 +3,8 @@
   "description": "US and Canada crypto options trading simulator where users estimate price rise or fall.",
   "requestFramePermissions": [
     "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

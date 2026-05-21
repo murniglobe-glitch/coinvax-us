@@ -2,15 +2,34 @@ import React, { useState, useEffect } from 'react';
 import { Home, Wallet, LineChart, BarChart2, User, LogOut, X, TrendingUp, TrendingDown, Activity, ArrowRightLeft, ArrowDownToLine, ArrowUpFromLine, CreditCard, Users, Bitcoin, ArrowLeft, Send, HeadphonesIcon, MessageSquare, Bell, Sun, Moon, CheckCircle2, Edit2, Save, Search, QrCode, Newspaper, PlaySquare, Play, Phone } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, YAxis, XAxis, PieChart, Pie, Cell, Tooltip, BarChart, Bar } from 'recharts';
 import { cn } from '../lib/utils';
-import TradeView from './TradeView';
+import TradeView, { Asset } from './TradeView';
 import NewsView from './NewsView';
 import { format } from 'date-fns';
 import Logo from './Logo';
 import P2PView from './P2PView';
+import AdminView from './AdminView';
+import { SlidersHorizontal } from 'lucide-react';
 import { fetchBinance } from '../lib/api';
-import { auth, db } from '../firebase';
-import { signOut, updateProfile } from 'firebase/auth';
-import { doc, getDoc, updateDoc, onSnapshot, getDocFromServer, collection, addDoc, query, where, orderBy, limit, setDoc, serverTimestamp, runTransaction } from 'firebase/firestore';
+import { 
+  auth, 
+  db, 
+  signOut, 
+  updateProfile, 
+  doc, 
+  getDoc, 
+  updateDoc, 
+  onSnapshot, 
+  getDocFromServer, 
+  collection, 
+  addDoc, 
+  query, 
+  where, 
+  orderBy, 
+  limit, 
+  setDoc, 
+  serverTimestamp, 
+  runTransaction 
+} from '../firebase';
 
 enum OperationType {
   CREATE = 'create',
@@ -86,13 +105,14 @@ interface AppNotification {
 }
 
 export default function MainApp({ user }: { user: any }) {
-  const [activeTab, setActiveTab] = useState<'HOME' | 'ASSETS' | 'TRADE' | 'MARKET' | 'P2P'>('HOME');
+  const [activeTab, setActiveTab] = useState<'HOME' | 'ASSETS' | 'TRADE' | 'MARKET' | 'P2P' | 'ADMIN'>('HOME');
   const [showProfile, setShowProfile] = useState(false);
   const [showSupport, setShowSupport] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [marketData, setMarketData] = useState<CoinData[]>([]);
   
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [selectedAsset, setSelectedAsset] = useState<Asset>('BTCUSDT');
   const [supportMessages, setSupportMessages] = useState<{id: string, text: string, sender: 'user'|'agent', time: number}[]>([
     { id: 'welcome', text: 'Hello! Welcome to COINVAX US support. How can we help you today?', sender: 'agent', time: 0 }
   ]);
@@ -130,7 +150,8 @@ export default function MainApp({ user }: { user: any }) {
     if (currentUser) {
       const q = query(
         collection(db, 'support_tickets', currentUser.uid, 'messages'),
-        orderBy('createdAt', 'asc')
+        orderBy('createdAt', 'asc'),
+        limit(50)
       );
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const msgs = snapshot.docs.map(doc => ({
@@ -257,7 +278,7 @@ export default function MainApp({ user }: { user: any }) {
       });
 
       // Listen to withdrawals
-      const q = query(collection(db, 'withdrawals'), where('uid', '==', user.uid));
+      const q = query(collection(db, 'withdrawals'), where('uid', '==', user.uid), limit(50));
       const unsubscribeWithdrawals = onSnapshot(q, (snapshot) => {
         snapshot.docChanges().forEach(async (change) => {
           const data = change.doc.data();
@@ -307,7 +328,7 @@ export default function MainApp({ user }: { user: any }) {
       });
 
       // Listen to deposits
-      const qDeposits = query(collection(db, 'deposits'), where('uid', '==', user.uid));
+      const qDeposits = query(collection(db, 'deposits'), where('uid', '==', user.uid), limit(50));
       const unsubscribeDeposits = onSnapshot(qDeposits, (snapshot) => {
         snapshot.docChanges().forEach(async (change) => {
           const data = change.doc.data();
@@ -361,16 +382,7 @@ export default function MainApp({ user }: { user: any }) {
   }, [user]);
 
   useEffect(() => {
-    async function testConnection() {
-      try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (error) {
-        if(error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration. ");
-        }
-      }
-    }
-    testConnection();
+    // Connection test is already handled in src/firebase.ts with robust retries
   }, []);
 
   const handleLogout = async () => {
@@ -529,11 +541,13 @@ export default function MainApp({ user }: { user: any }) {
       case 'ASSETS':
         return <AssetsView allocations={allocations} setAllocations={handleUpdateAllocations} balance={balance} addNotification={addNotification} userCountry={currentUser?.country} />;
       case 'TRADE':
-        return <TradeView user={currentUser} balance={allocations['Trading Account']} setBalance={handleSetBalance} addNotification={addNotification} />;
+        return <TradeView user={currentUser} balance={allocations['Trading Account']} setBalance={handleSetBalance} addNotification={addNotification} currentAsset={selectedAsset} setCurrentAsset={setSelectedAsset} />;
       case 'MARKET':
         return <MarketView marketData={marketData} />;
       case 'P2P':
-        return <P2PView addNotification={addNotification} />;
+        return <P2PView addNotification={addNotification} defaultAsset={selectedAsset} />;
+      case 'ADMIN':
+        return <AdminView currentUser={currentUser} addNotification={addNotification} onClose={() => setActiveTab('HOME')} />;
       default:
         return null;
     }
@@ -760,6 +774,9 @@ export default function MainApp({ user }: { user: any }) {
         <NavButton icon={<LineChart className="w-6 h-6" />} label="Trade" isActive={activeTab === 'TRADE'} onClick={() => setActiveTab('TRADE')} />
         <NavButton icon={<BarChart2 className="w-6 h-6" />} label="Market" isActive={activeTab === 'MARKET'} onClick={() => setActiveTab('MARKET')} />
         <NavButton icon={<Users className="w-6 h-6" />} label="P2P" isActive={activeTab === 'P2P'} onClick={() => setActiveTab('P2P')} />
+        {(currentUser?.role === 'admin' || currentUser?.email === 'murni.globe@gmail.com' || currentUser?.uid === 'F9Hd82WxLgSSsXZF6btmyka0fqg2') && (
+          <NavButton icon={<SlidersHorizontal className="w-6 h-6 text-emerald-400 animate-pulse" />} label="Admin" isActive={activeTab === 'ADMIN'} onClick={() => setActiveTab('ADMIN')} />
+        )}
       </nav>
     </div>
   );
@@ -1153,6 +1170,7 @@ function AssetsView({ allocations, setAllocations, balance, addNotification, use
     
     const qDeposits = query(collection(db, 'deposits'), where('uid', '==', auth.currentUser.uid));
     const qWithdrawals = query(collection(db, 'withdrawals'), where('uid', '==', auth.currentUser.uid));
+    const qTransfers = query(collection(db, 'transfers'), where('uid', '==', auth.currentUser.uid));
     
     const unsubscribeDeposits = onSnapshot(qDeposits, (snapshot) => {
       const depositTxs = snapshot.docs.map(doc => {
@@ -1194,9 +1212,31 @@ function AssetsView({ allocations, setAllocations, balance, addNotification, use
       handleFirestoreError(error, OperationType.LIST, 'withdrawals');
     });
 
+    const unsubscribeTransfers = onSnapshot(qTransfers, (snapshot) => {
+      const transferTxs = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          type: 'Transfer',
+          asset: 'USD',
+          amount: data.amount.toString(),
+          status: 'Completed',
+          date: new Date(data.createdAt).toISOString(),
+          details: `${data.fromAccount} → ${data.toAccount}`
+        };
+      });
+      setTransactions(prev => {
+        const otherTxs = prev.filter(tx => tx.type !== 'Transfer');
+        return [...otherTxs, ...transferTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      });
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'transfers');
+    });
+
     return () => {
       unsubscribeDeposits();
       unsubscribeWithdrawals();
+      unsubscribeTransfers();
     };
   }, []);
 
@@ -1911,22 +1951,34 @@ function AssetsView({ allocations, setAllocations, balance, addNotification, use
                   Cancel
                 </button>
                 <button 
-                  onClick={() => {
+                  onClick={async () => {
                     setShowTransferConfirm(false);
                     setView('OVERVIEW');
                     
-                    // Update allocations
                     const amount = Number(transferAmount);
-                    setAllocations(prev => ({
-                      ...prev,
-                      [fromAccount]: prev[fromAccount] - amount,
-                      [toAccount]: prev[toAccount] + amount
-                    }));
-                    
-                    setTransactions(prev => [{ id: Date.now().toString(), type: 'Transfer', asset: 'USD', amount: transferAmount, status: 'Completed', date: new Date().toISOString(), details: `${fromAccount} → ${toAccount}` }, ...prev]);
-                    addNotification?.('Transfer Successful', `Transferred $${amount.toLocaleString()} from ${fromAccount} to ${toAccount}`);
-                    setTransferAmount('');
-                    // In a real app, show a success toast here
+                    try {
+                      // Update allocations
+                      await setAllocations(prev => ({
+                        ...prev,
+                        [fromAccount]: prev[fromAccount] - amount,
+                        [toAccount]: prev[toAccount] + amount
+                      }));
+                      
+                      // Save to Firestore
+                      await addDoc(collection(db, 'transfers'), {
+                        uid: auth.currentUser?.uid,
+                        fromAccount,
+                        toAccount,
+                        amount,
+                        createdAt: Date.now()
+                      });
+
+                      addNotification?.('Transfer Successful', `Transferred $${amount.toLocaleString()} from ${fromAccount} to ${toAccount}`);
+                      setTransferAmount('');
+                    } catch (error) {
+                      handleFirestoreError(error, OperationType.CREATE, 'transfers');
+                      addNotification?.('Error', 'Failed to complete transfer.');
+                    }
                   }}
                   className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold py-3 rounded-xl transition-colors"
                 >
@@ -2231,78 +2283,121 @@ function AssetsView({ allocations, setAllocations, balance, addNotification, use
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Fund Allocation */}
+      <div className="grid grid-cols-1 gap-6">
+        {/* Detailed History Tables */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-          <h3 className="text-lg font-bold mb-6">Fund Allocation</h3>
-          <div className="space-y-6">
-            <div className="flex h-3 w-full rounded-full overflow-hidden bg-zinc-800">
-              {allocationData.map((item) => (
-                <div 
-                  key={item.name} 
-                  style={{ width: `${(item.value / balance) * 100}%`, backgroundColor: item.color }}
-                  className="h-full transition-all duration-500"
-                />
-              ))}
-            </div>
-            <div className="grid grid-cols-1 gap-4">
-              {allocationData.map((item) => (
-                <div key={item.name} className="flex items-center justify-between group">
-                  <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
-                    <span className="text-sm font-medium text-zinc-400">{item.name}</span>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm font-black font-sans block">${item.value.toLocaleString()}</span>
-                    <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
-                      {((item.value / balance) * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
+          <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
+            <ArrowDownToLine className="w-5 h-5 text-emerald-500" />
+            Deposit History
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead className="bg-zinc-950 text-zinc-500 text-xs uppercase tracking-wider">
+                <tr>
+                  <th className="px-4 py-3 font-bold">Method</th>
+                  <th className="px-4 py-3 font-bold">Amount</th>
+                  <th className="px-4 py-3 font-bold">Status</th>
+                  <th className="px-4 py-3 font-bold">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/50">
+                {transactions.filter(tx => tx.type === 'Deposit').length === 0 ? (
+                  <tr><td colSpan={4} className="px-4 py-8 text-center text-zinc-500">No deposits found</td></tr>
+                ) : (
+                  transactions.filter(tx => tx.type === 'Deposit').map(tx => (
+                    <tr key={tx.id} className="hover:bg-zinc-800/30 transition-colors">
+                      <td className="px-4 py-4 font-bold">{tx.asset}</td>
+                      <td className="px-4 py-4 font-sans font-black text-emerald-400">${Number(tx.amount).toLocaleString()}</td>
+                      <td className="px-4 py-4">
+                        <span className={cn("text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider", 
+                          tx.status === 'Completed' ? "bg-emerald-500/10 text-emerald-500" : 
+                          tx.status === 'Denied' ? "bg-rose-500/10 text-rose-500" : "bg-amber-500/10 text-amber-500"
+                        )}>
+                          {tx.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 text-zinc-500">{format(new Date(tx.date), 'MMM dd, HH:mm')}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-          <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-            <Activity className="w-5 h-5 text-emerald-500" />
-            Transaction History
+          <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
+            <ArrowUpFromLine className="w-5 h-5 text-rose-500" />
+            Withdrawal History
           </h3>
-          <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-            {transactions.length === 0 ? (
-              <div className="text-center text-zinc-500 py-4">No recent transactions</div>
-            ) : (
-              transactions.map((tx) => (
-                <div key={tx.id} className="flex items-center justify-between p-3 bg-zinc-950/50 rounded-xl border border-zinc-800/50 hover:border-emerald-500/30 transition-colors group">
-                  <div className="flex items-center gap-3">
-                    <div className={cn(
-                      "w-10 h-10 rounded-full flex items-center justify-center",
-                      tx.type === 'Deposit' ? "bg-emerald-500/10 text-emerald-500" :
-                      tx.type === 'Withdraw' ? "bg-rose-500/10 text-rose-500" :
-                      tx.type === 'Transfer' ? "bg-blue-500/10 text-blue-500" : "bg-amber-500/10 text-amber-500"
-                    )}>
-                      {tx.type === 'Deposit' ? <ArrowDownToLine className="w-5 h-5" /> :
-                       tx.type === 'Withdraw' ? <ArrowUpFromLine className="w-5 h-5" /> :
-                       tx.type === 'Transfer' ? <ArrowRightLeft className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
-                    </div>
-                    <div>
-                      <p className="font-bold text-sm">{tx.type} {tx.asset}</p>
-                      <p className="text-xs text-zinc-500">{format(new Date(tx.date), 'yyyy-MM-dd HH:mm')}</p>
-                      {tx.details && <p className="text-[10px] text-zinc-400 mt-0.5">{tx.details}</p>}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-bold text-sm">{tx.type === 'Withdraw' ? '-' : '+'}{tx.amount} {tx.asset}</p>
-                    <p className={cn(
-                      "text-[10px] font-bold uppercase tracking-wider",
-                      tx.status === 'Completed' ? "text-emerald-500" : 
-                      tx.status === 'Denied' || tx.status === 'CANCELED' || tx.status === 'DISAPPROVED' ? "text-rose-500" : "text-amber-500"
-                    )}>{tx.status}</p>
-                  </div>
-                </div>
-              ))
-            )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead className="bg-zinc-950 text-zinc-500 text-xs uppercase tracking-wider">
+                <tr>
+                  <th className="px-4 py-3 font-bold">Method</th>
+                  <th className="px-4 py-3 font-bold">Amount</th>
+                  <th className="px-4 py-3 font-bold">Status</th>
+                  <th className="px-4 py-3 font-bold">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/50">
+                {transactions.filter(tx => tx.type === 'Withdraw').length === 0 ? (
+                  <tr><td colSpan={4} className="px-4 py-8 text-center text-zinc-500">No withdrawals found</td></tr>
+                ) : (
+                  transactions.filter(tx => tx.type === 'Withdraw').map(tx => (
+                    <tr key={tx.id} className="hover:bg-zinc-800/30 transition-colors">
+                      <td className="px-4 py-4 font-bold">{tx.details || 'Bank Transfer'}</td>
+                      <td className="px-4 py-4 font-sans font-black text-rose-400">-${Number(tx.amount).toLocaleString()}</td>
+                      <td className="px-4 py-4">
+                        <span className={cn("text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider", 
+                          tx.status === 'Completed' ? "bg-emerald-500/10 text-emerald-500" : 
+                          tx.status === 'Denied' || tx.status === 'CANCELED' || tx.status === 'DISAPPROVED' ? "bg-rose-500/10 text-rose-500" : "bg-amber-500/10 text-amber-500"
+                        )}>
+                          {tx.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 text-zinc-500">{format(new Date(tx.date), 'MMM dd, HH:mm')}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
+            <ArrowRightLeft className="w-5 h-5 text-blue-500" />
+            Transfer History
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead className="bg-zinc-950 text-zinc-500 text-xs uppercase tracking-wider">
+                <tr>
+                  <th className="px-4 py-3 font-bold">From Account</th>
+                  <th className="px-4 py-3 font-bold">To Account</th>
+                  <th className="px-4 py-3 font-bold">Amount</th>
+                  <th className="px-4 py-3 font-bold">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/50">
+                {transactions.filter(tx => tx.type === 'Transfer').length === 0 ? (
+                  <tr><td colSpan={4} className="px-4 py-8 text-center text-zinc-500">No transfers found</td></tr>
+                ) : (
+                  transactions.filter(tx => tx.type === 'Transfer').map(tx => {
+                    const [from, to] = (tx.details || 'Account → Account').split(' → ');
+                    return (
+                      <tr key={tx.id} className="hover:bg-zinc-800/30 transition-colors">
+                        <td className="px-4 py-4 font-bold">{from}</td>
+                        <td className="px-4 py-4 font-bold">{to}</td>
+                        <td className="px-4 py-4 font-sans font-black text-blue-400">${Number(tx.amount).toLocaleString()}</td>
+                        <td className="px-4 py-4 text-zinc-500">{format(new Date(tx.date), 'MMM dd, HH:mm')}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
